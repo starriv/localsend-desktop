@@ -1,0 +1,25 @@
+# Normalise line endings in the repository, whatever the contributor's OS.
+* text=auto eol=lf
+
+# Source and scripts are checked out with LF so shell scripts stay runnable.
+*.rs text eol=lf
+*.tsx text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+deny.toml text eol=lf
+
+# Binary assets must never be converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.icns binary
+*.app binary
+
+# GitHub's language statistics: the vendored core is a dependency, not code we
+# maintain, and generated files should not count.
+vendor/localsend/** linguist-vendored

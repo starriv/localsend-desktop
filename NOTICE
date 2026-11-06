@@ -1,0 +1,26 @@
+localsend-desktop (the app's display name is LocalSend) is built on, and
+redistributes in source form:
+
+- LocalSend, Apache-2.0, https://github.com/localsend/localsend
+  The official protocol core (crate `localsend`) is vendored unmodified at
+  `vendor/localsend` from upstream commit 92e133aa43869e94d394fd04fa70c50a0f796a64;
+  see `vendor/localsend/UPSTREAM.md` and `vendor/localsend/LICENSE` (the full
+  Apache License 2.0 text). No changes were made to it. The packaged `.app`
+  bundles these license texts under `Contents/Resources/`.
+
+- Native Shell (nsh), Apache-2.0, https://github.com/longbridge/nsh
+  The UI framework this app is written in (engine, renderer, platform hosts).
+  Its `examples/gallery-rs` was read for API technique (adaptive colors,
+  canvas icons, layout/motion patterns); no gallery source file is copied.
+
+Third-party Rust crates: the dependency tree is predominantly MIT and/or
+Apache-2.0 (plus BSD/ISC/Zlib/Unicode/CDLA-Permissive licenses and one MPL-2.0
+crate, `option-ext`, pulled in by nsh); there is no GPL/AGPL code. The full,
+revision-pinned list is available from `cargo tree --locked --format '{p} {l}'`
+and is checked by `cargo deny` (`.github/workflows/ci.yml`, `deny.toml`).
+
+References read for architecture and design only (no source copied):
+- Noop, MIT, https://github.com/huacnlee/noop
+- Omasend, MIT, https://github.com/huacnlee/omasend
+
+This app's own source is MIT; see LICENSE.

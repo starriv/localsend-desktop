@@ -1,0 +1,128 @@
+[package]
+name = "localsend-desktop"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+license = "MIT"
+description = "A native, cross-platform LocalSend client built with Native Shell (nsh)"
+
+[workspace]
+# The vendored core is a path dependency, not part of this workspace: keep it
+# byte-identical to upstream (fmt/clippy/tests must not touch it).
+members = ["."]
+exclude = ["vendor/localsend"]
+# Bare cargo commands (fmt, test, clippy) target the app only; the vendored
+# core is a path dependency and must stay byte-identical to upstream.
+default-members = ["."]
+
+[dependencies]
+# The LocalSend protocol core: HTTP server/client, TLS identity, multicast
+# discovery and the v2.2 wire model - the same crate the Flutter app runs.
+# Vendored (Apache-2.0, unmodified) so this workspace builds without the rest
+# of the monorepo; `scripts/sync-core.sh` updates it and records the revision
+# in vendor/localsend/UPSTREAM.md.
+localsend = { path = "vendor/localsend", features = ["discovery"] }
+
+nsh-core = "0.4.0"
+nsh-base = "0.4.0"
+
+anyhow = "1"
+async-channel = "2"
+chrono = "0.4"
+dirs = "6"
+futures-util = "0.3"
+gethostname = "1"
+mime_guess = "2"
+pem = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Only the features the app uses (the `tracing` subscriber in `src/logging.rs`
+# needs no tokio feature): rt-multi-thread for the engine and spawn_blocking,
+# time/sync/fs for the network actor, macros for select!/#[tokio::test],
+# io-util for the code paths nsh drives. `process` is test-only (see
+# [dev-dependencies]); nsh and the vendored core enable the features they need
+# themselves, and features unify across the graph.
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "fs", "io-util", "macros"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+# Installed by `src/logging.rs` (stderr + file, RUST_LOG via EnvFilter).
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# The network e2e tests spawn the built CLI with tokio::process.
+tokio = { version = "1", features = ["process"] }
+# Scratch directories for the file system tests (naming, identity, logging).
+tempfile = "3"
+
+# Unix-only: the network layer calls statvfs(3) to refuse a receive when the
+# target volume has no free space. libc is already in the dependency graph via
+# nsh; declaring it is the only way for the app itself to call it.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nsh-platform-linux = { version = "0.4.0", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nsh-platform-macos = { version = "0.4.0", default-features = false }
+# The menu bar item (src/platform/status_item.rs): nsh 0.4 has no status item
+# API, so it uses AppKit directly. Same versions nsh-platform-macos already
+# pulls in; only the features below are added.
+objc2 = "0.6"
+# Posts the status item's updates to the main queue.
+dispatch2 = "0.3"
+# The drawing handler of the menu icons (NSImage).
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSGeometry",
+    "NSNotification",
+    "NSObject",
+    "NSString",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-core-foundation",
+    "NSApplication",
+    "NSBezierPath",
+    "NSButton",
+    "NSColor",
+    "NSControl",
+    "NSImage",
+    "NSMenu",
+    "NSMenuItem",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSStatusBar",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSView",
+    "NSWindow",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nsh-platform-windows = { version = "0.4.0", default-features = false }
+
+# Debug builds keep only line tables: the app is rebuilt constantly while dev
+# running, and full debuginfo dominates both link time and target/ size.
+[profile.dev]
+debug = "line-tables-only"
+
+# RSA key generation is bignum-heavy and ~10x slower unoptimized: the first
+# launch generates the device identity, which otherwise looks like a hang.
+# (The repository root sets the same overrides; a separate workspace does not
+# inherit them.)
+[profile.dev.package.rsa]
+opt-level = 2
+
+[profile.dev.package.num-bigint-dig]
+opt-level = 2
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1

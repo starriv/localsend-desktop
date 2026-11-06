@@ -1,0 +1,234 @@
+name: Release
+
+# Builds the installers and attaches them to a GitHub Release: a macOS .app
+# (zip and dmg) and the Windows x64 portable build. Dispatch it from the
+# Actions tab or push a `v*` tag. The version comes from Cargo.toml and
+# nsh.json. Builds are ad-hoc signed (macOS) / unsigned (Windows), not
+# notarized.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: create the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Read the version
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME is not v$version (Cargo.toml)"
+            exit 1
+          fi
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          本地局域网文件互传的桌面客户端。
+
+          - macOS（Apple 芯片，macOS 14+）：下载 LocalSend-${VERSION}-macos-arm64.dmg（或 .zip），把 LocalSend.app 拖进「应用程序」文件夹；ad-hoc 签名、未公证，首次打开请右键点击 →「打开」。
+          - Windows（x64）：下载 LocalSend-${VERSION}-windows-x86_64-setup.exe（安装器，装到 %LOCALAPPDATA%\Programs\LocalSend，带开始菜单/桌面快捷方式和卸载项），或 LocalSend-${VERSION}-windows-x86_64.zip（免安装）；构建未签名，SmartScreen 可能提示。
+
+          每个资源旁的 .sha256 文件可用于校验下载。
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists; the build jobs add their assets to it"
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "LocalSend Desktop $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+  macos:
+    name: macOS .app, zip and dmg
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # rust-toolchain.toml pins 1.97.1; the action reads it when no
+      # `toolchain` input is given (its pinned version does not take one).
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: locked
+
+      # Installed from the GitHub release rather than nsh.dev's installer:
+      # that URL answered 404 from GitHub-hosted runners. `nsh --version` is
+      # asserted because nsh.json/Cargo.lock pin the 0.4.x CLI.
+      - name: Install nsh 0.4
+        env:
+          NSH_VERSION: "v0.4.0"
+        run: |
+          case "$(uname -s)/$(uname -m)" in
+            Darwin/arm64) platform=macos-arm64 ;;
+            *)
+              echo "::error::no prebuilt nsh for $(uname -s)/$(uname -m); build it from source"
+              exit 1
+              ;;
+          esac
+          asset="nsh-$platform.tar.gz"
+          url="https://github.com/longbridge/nsh/releases/download/$NSH_VERSION/$asset"
+          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$RUNNER_TEMP/$asset" "$url"
+          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$RUNNER_TEMP/$asset.sha256" "$url.sha256"
+          (cd "$RUNNER_TEMP" && shasum -a 256 -c "$asset.sha256")
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP"
+          rm -rf "$HOME/.nsh"
+          mv "$RUNNER_TEMP/nsh" "$HOME/.nsh"
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$HOME/.nsh/bin/nsh" "$HOME/.local/bin/nsh"
+          echo "$HOME/.nsh/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.nsh/bin/nsh" --version
+          "$HOME/.nsh/bin/nsh" --version | grep -q '^nsh 0\.4\.' || {
+            echo "::error::nsh 0.4.x is required (nsh.json/Cargo.lock pin 0.4)"
+            exit 1
+          }
+
+      - name: Package the app
+        run: ./scripts/package-macos.sh
+
+      - name: Zip the .app, build the dmg, checksum both
+        id: package
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          arch=$(uname -m)
+          mkdir -p dist
+          zip="LocalSend-${version}-macos-${arch}.zip"
+          ditto -c -k --keepParent .nsh/out/LocalSend.app "dist/$zip"
+
+          staging="$RUNNER_TEMP/dmg"
+          mkdir -p "$staging"
+          cp -R .nsh/out/LocalSend.app "$staging/LocalSend.app"
+          ln -s /Applications "$staging/Applications"
+          dmg="LocalSend-${version}-macos-${arch}.dmg"
+          hdiutil create -volname "LocalSend $version" -srcfolder "$staging" \
+            -ov -format UDZO "dist/$dmg"
+
+          (cd dist && shasum -a 256 "$zip" > "$zip.sha256" && shasum -a 256 "$dmg" > "$dmg.sha256")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          ls -l dist
+
+      - name: Upload the macOS assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.prepare.outputs.tag }}" dist/* --clobber
+
+  windows:
+    name: Windows x64 portable build
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: locked
+
+      # The Windows distribution comes from the same GitHub release; the
+      # shipped install.ps1 downloads it, verifies its sha256 and unpacks
+      # `nsh\bin\nsh.exe` (its prebuilt runtimes sit next to it).
+      - name: Install nsh 0.4
+        shell: pwsh
+        env:
+          NSH_VERSION: "v0.4.0"
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'nsh-install.ps1'
+          Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/longbridge/nsh/releases/download/v0.4.0/install.ps1" -OutFile $installer
+          & $installer
+          $bin = Join-Path $env:LOCALAPPDATA 'nsh\bin'
+          if (-not (Test-Path (Join-Path $bin 'nsh.exe'))) { throw "nsh was not installed to $bin" }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & (Join-Path $bin 'nsh.exe') --version
+          $version = & (Join-Path $bin 'nsh.exe') --version
+          if ($version -notmatch '^nsh 0\.4\.') { throw "nsh 0.4.x is required (found $version)" }
+
+      - name: Package the Windows app
+        shell: pwsh
+        run: nsh package --target windows
+
+      - name: Collect the portable build and checksum it
+        id: package
+        shell: pwsh
+        run: |
+          $version = ((Get-Content Cargo.toml | Select-String '^version = "(.*)"').Matches[0].Groups[1].Value)
+          if (-not $version) { throw 'could not read the version from Cargo.toml' }
+          $zip = ".nsh\out\LocalSend.zip"
+          if (-not (Test-Path $zip)) { throw "nsh package did not write $zip" }
+          New-Item -ItemType Directory -Path dist | Out-Null
+          $asset = "LocalSend-$version-windows-x86_64.zip"
+          Copy-Item $zip "dist\$asset"
+          $hash = (Get-FileHash -Algorithm SHA256 -Path "dist\$asset").Hash.ToLower()
+          "$hash  $asset" | Out-File -FilePath "dist\$asset.sha256" -Encoding ascii
+          Get-ChildItem dist | Format-Table Name, Length
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) { throw "makensis not found at $makensis" }
+          & $makensis /VERSION
+
+      - name: Build the Windows installer
+        shell: pwsh
+        run: |
+          $version = ((Get-Content Cargo.toml | Select-String '^version = "(.*)"').Matches[0].Groups[1].Value)
+          if (-not $version) { throw 'could not read the version from Cargo.toml' }
+          $source = Join-Path $PWD '.nsh\out\LocalSend'
+          if (-not (Test-Path $source)) { throw "no packaged app at $source" }
+          $name = "LocalSend-$version-windows-x86_64-setup.exe"
+          $out = Join-Path $PWD "dist\$name"
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          & $makensis "/DAPP_VERSION=$version" "/DAPP_VERSION_NUM=$version.0" "/DSOURCE_DIR=$source" "/DOUT_FILE=$out" 'scripts\windows-installer.nsi'
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed ($LASTEXITCODE)" }
+          if (-not (Test-Path $out)) { throw "no installer at $out" }
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $out).Hash.ToLower()
+          "$hash  $name" | Out-File -FilePath "$out.sha256" -Encoding ascii
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Upload the Windows assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" dist/* --clobber

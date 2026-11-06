@@ -1,0 +1,66 @@
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/).
+#
+# Run locally with `cargo deny check` (CI runs it in .github/workflows/ci.yml).
+# The vendored LocalSend core is a path dependency, so it is scanned with the
+# rest of the dependency graph.
+
+[graph]
+# The targets the app ships for. Keeping the list explicit makes the license
+# and advisory results stable regardless of the machine running the check.
+targets = [
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-pc-windows-msvc" },
+]
+
+[advisories]
+version = 2
+# A yanked crate is not automatically a vulnerability, but it should not enter
+# a release without a conscious decision.
+yanked = "deny"
+# The network layer's upstream request-body limit (docs/STATUS.md, known
+# gaps) is not a RUSTSEC advisory; advisories that do matter are listed
+# here only with a comment and a link.
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licenses only; copyleft needs a deliberate decision below.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+]
+# MPL-2.0 is file-level copyleft: option-ext is the only dependency under it,
+# it is used unmodified and its source is available from crates.io. Distributing
+# the binary is fine as long as NOTICE says where the source is (it does). No
+# other copyleft is allowed.
+exceptions = [
+    { name = "option-ext", allow = ["MPL-2.0"] },
+]
+
+[bans]
+# nsh and the vendored core pull in several versions of the same crate
+# (cryptography/rendering stacks); keep that visible but do not fail on it.
+multiple-versions = "warn"
+wildcards = "deny"
+# A duplicate of a crate with a security history must not creep in silently.
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
