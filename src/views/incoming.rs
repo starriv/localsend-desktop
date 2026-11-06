@@ -42,6 +42,8 @@ fn content(session: Session, request: IncomingRequest) -> impl IntoElement {
     let hint = session.clone();
     let accept = session.clone();
     let decline = session.clone();
+    let verify = session.clone();
+    let verify_peer = request.peer.clone();
     // A sheet is modal: the keyboard starts on its primary action, so Enter
     // accepts and Screen Readers announce the decision first.
     let accept_anchor = element_ref();
@@ -143,6 +145,12 @@ fn content(session: Session, request: IncomingRequest) -> impl IntoElement {
                 .items_center()
                 .justify_end()
                 .gap(px(space::SM))
+                .child(
+                    button(session.text("verify.action"))
+                        .kind(ButtonKind::Secondary)
+                        .icon(IconName::Verified)
+                        .on_press(move || verify.open_verify(verify_peer.clone())),
+                )
                 .child(
                     button(session.text("receive.decline"))
                         .kind(ButtonKind::Secondary)

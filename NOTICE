@@ -8,6 +8,14 @@ redistributes in source form:
   Apache License 2.0 text). No changes were made to it. The packaged `.app`
   bundles these license texts under `Contents/Resources/`.
 
+- Material Icons font (Material Icons, Copyright 2019 Google LLC),
+  CC BY 4.0, https://creativecommons.org/licenses/by/4.0/
+  `assets/MaterialIcons-Regular.otf`, taken unmodified from the Flutter SDK's
+  `material_fonts` artifact, draws the fingerprint icon view LocalSend's
+  verification page uses. Its license text ships as
+  `Contents/Resources/LICENSE-MaterialIcons` in the macOS bundle and as
+  `MaterialIcons_LICENSE.txt` among the app's NSH assets on every platform.
+
 - Native Shell (nsh), Apache-2.0, https://github.com/longbridge/nsh
   The UI framework this app is written in (engine, renderer, platform hosts).
   Its `examples/gallery-rs` was read for API technique (adaptive colors,

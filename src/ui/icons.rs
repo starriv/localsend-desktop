@@ -43,6 +43,8 @@ pub enum IconName {
     Close,
     /// A tick.
     Check,
+    /// A shield with a tick: a verified device.
+    Verified,
     /// `›`.
     ChevronRight,
     /// `⌄`.
@@ -319,6 +321,18 @@ impl IconName {
                 line(p, &[14.6, 5.4, 5.4, 14.6])
             }
             IconName::Check => line(painter, &[4.4, 10.5, 8.3, 14.2, 15.6, 5.8]),
+            IconName::Verified => {
+                // A shield with a tick inside, so "verify this device" reads
+                // as an action, not as the row's selected state.
+                let p = poly(
+                    painter,
+                    &[
+                        10.0, 2.9, 16.2, 5.1, 16.2, 10.1, 15.0, 13.9, 10.0, 17.1, 5.0, 13.9, 3.8,
+                        10.1, 3.8, 5.1,
+                    ],
+                );
+                line(p, &[7.4, 9.9, 9.4, 11.9, 12.9, 7.7])
+            }
             IconName::ChevronRight => line(painter, &[7.8, 4.6, 13.2, 10.0, 7.8, 15.4]),
             IconName::ChevronDown => line(painter, &[4.6, 7.8, 10.0, 13.2, 15.4, 7.8]),
             IconName::ArrowUp => {

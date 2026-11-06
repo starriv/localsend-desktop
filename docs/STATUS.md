@@ -1,9 +1,11 @@
 # Status
 
 What is implemented, what was verified, and what is deliberately not there.
-Last updated 2026-11-06 for the 2026-11 review and its fixes, the macOS menu bar
-item, the icon `Pen` refactor and the 1.0.0 release (squashed history, GitHub
-Actions build + release workflow).
+Last updated 2026-11-06 for the 1.0.1 release: device verification (LocalSend's
+combined fingerprint, Material icon view and text), the send/receive design
+pass (paper-plane flight, flatter lists, primary-action hierarchy), the
+CC BY 4.0 Material Icons font, and the GitHub Actions build + release workflow
+(1.0.0 shipped first).
 
 ## Rename (localsend-native → localsend-client → localsend-desktop)
 
@@ -61,19 +63,22 @@ Remaining items are upstream/credential limitations, listed below.
 | Send | files, folders, text; prepare-upload, PIN retry, sequential uploads, SHA-256 offers, progress, cancel, idle watchdog, error surfacing |
 | Receive | accept/decline, PIN, auto-accept option, collision-safe atomic file publish, received-text capture, bounded text budget |
 | Transfers UI | bottom progress card (bytes/speed/ETA/cancel), detail sheet, completed state with Open/Reveal |
+| Device verification | combined fingerprint (both certificates, sorted) as LocalSend's 16 Material icons or as text; 260-entry icon alphabet and the CC BY 4.0 Material Icons font are bundled; entries on device rows, incoming requests and transfer details |
 | History | grouped by day, persisted (max 100), open/reveal/copy, clear, schema-versioned with quota-aware trimming |
 | Settings | alias, device type, discoverable, PIN, save folder, encryption toggle, auto-accept, appearance, language, run-in-background; changes that need a node restart are deferred while a transfer runs |
-| Desktop | hidden title bar + traffic-light inset, application menu with shortcuts, file dialogs, clipboard (text + Finder files), open/reveal, notifications hook (see gaps), close-to-background policy, menu bar item (macOS: devices, status, recent transfers, Open/Quit; the Dock icon hides while the window is closed), quit confirmation during transfers |
+| Desktop | hidden title bar + traffic-light inset, application menu with shortcuts, file dialogs, clipboard (text + Finder files), open/reveal, notifications hook (see gaps), close-to-background policy, menu bar item (macOS: devices, status, recent transfers, Open/Quit; the Dock icon hides while the window is closed), device verification sheet (combined fingerprint as LocalSend's 16 Material icons or as text), quit confirmation during transfers |
 | i18n | English + Simplified Chinese, key/placeholder parity enforced by tests |
 | Design | custom Rust design system over `nsh-base`: tokens, canvas icon set, buttons/toggles/segmented/progress/rings/device tiles/badges, light and dark, WCAG AA text contrast |
-| Packaging | `nsh package --target macos` + strip/re-sign script; arm64 thin, license files bundled, `NSLocalNetworkUsageDescription`/`NSBonjourServices` added; the release workflow publishes a dmg, a zip and the Windows x64 build (portable zip + NSIS installer), each with sha256 |
+| Packaging | `nsh package --target macos` + strip/re-sign script; arm64 thin, license files bundled, `NSLocalNetworkUsageDescription`/`NSBonjourServices` added; the release workflow publishes a dmg, a zip and the Windows x64 build (portable zip + NSIS installer), each with sha256; the bundled Material Icons font ships under its CC BY 4.0 license (macOS `Contents/Resources/LICENSE-MaterialIcons`, NSH assets elsewhere) |
 | Observability | `src/logging.rs` installs a `tracing` subscriber in every entry point: stderr + `~/Library/Logs/localsend-desktop/localsend-desktop.log`, `RUST_LOG` filter, panic hook |
 
 ## Verified
 
 - `cargo fmt --check`, `cargo clippy --all-targets --no-deps -- -D warnings`
-  clean for the app crate; `cargo test --lib` **142 passing, 0 failed, 7
-  ignored** (149 total; `cargo test --lib -- --ignored`: 7/7).
+  clean for the app crate; `cargo test --lib` **152 passing, 0 failed, 7
+  ignored** (159 total; `cargo test --lib -- --ignored`: 7/7, re-run
+  2026-11-06). Headless only: the nsh UI/screenshot suites below were **not**
+  re-run after the verification sheet and the send-screen design pass.
 - End-to-end with the real core, on real sockets/TLS: independent
   `LsHttpClientV2` peer → register → PIN prepare → checksum upload →
   `FileDone`/`Completed` with byte comparison; Node → core server stub; two
@@ -84,18 +89,22 @@ Remaining items are upstream/credential limitations, listed below.
   and 18 screenshot/interaction tests (`LOCALSEND_DEMO=1 nsh test
   ui-tests/Screenshots.test.tsx --target macos`), including keyboard Escape, focus
   restoration, favorites, clipboard-file paste and transfer-progress traces.
-  Both suites pass on the menu bar change (6/6 and 18/18, re-run 2026-11-06).
-  A Chinese-UI variant (`ui-tests/ScreenshotsZh.test.tsx`, 5 tests) captures the README
-  montage with the same screens (5/5).
+  Both suites passed on the menu bar change (6/6 and 18/18, re-run 2026-11-06).
+  A Chinese-UI variant (`ui-tests/ScreenshotsZh.test.tsx`, 5 tests) captured the README
+  montage with the same screens (5/5). The screenshot suites were **not** re-run
+  after the verification sheet and send-screen redesign (headless UI was: 6/6 on
+  1.0.1), so the README montage still shows the previous empty state.
 - Menu bar item (macOS): the packaged `.app` shows the app's paper-plane glyph
   in the status bar (launched and captured 2026-11-06), and the menu contents
   are computed by the unit-tested `menu_rows`; opening the menu itself is a
   manual check, not covered by the suites.
 - `./scripts/check.sh` is the local gate: toolchain/vendor/version checks, fmt,
   clippy, unit + network e2e tests and the headless UI suite (run it explicitly;
-  it is not part of the default edit loop). CI (`.github/workflows/ci.yml`) runs
-  fmt + clippy on every push; `.github/workflows/release.yml` builds the `.app`
-  and publishes it to a GitHub Release on dispatch or a `v*` tag.
+  it is not part of the default edit loop). It passes on **1.0.1**: 152 unit
+  tests (7 ignored), 7/7 network e2e, 6/6 headless UI (re-run 2026-11-06).
+  CI (`.github/workflows/ci.yml`) runs fmt + clippy on every push;
+  `.github/workflows/release.yml` builds the `.app` and publishes it to a
+  GitHub Release on dispatch or a `v*` tag.
 - Packaging: `nsh build` and `nsh package --target macos` succeed; the `.app`
   launches from LaunchServices with the native window and its traffic lights
   (red/yellow/green inset into the sidebar), the localized app menu

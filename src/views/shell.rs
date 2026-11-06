@@ -50,6 +50,9 @@ enum Sheet {
     Pin,
     /// Settings.
     Settings,
+    /// The combined fingerprint of this device and a peer (LocalSend's
+    /// "Verify" page), opened from a device row or an incoming request.
+    Verify,
 }
 
 /// Dismisses `sheet` if it can be dismissed (an incoming request waits for
@@ -58,6 +61,7 @@ fn dismiss_sheet(session: &Session, sheet: Sheet) {
     match sheet {
         Sheet::Settings => session.open_settings(false),
         Sheet::Pin => session.dismiss_pin(),
+        Sheet::Verify => session.close_verify(),
         Sheet::Incoming | Sheet::None => {}
     }
 }
@@ -68,7 +72,9 @@ fn dismiss_sheet(session: &Session, sheet: Sheet) {
 /// Escape and the scrim both dismiss through this one answer, so a key press
 /// can never close a sheet the user cannot see.
 fn current_sheet(session: &Session) -> Sheet {
-    if session.read_transfers(|state| state.incoming.is_some()) {
+    if session.verify_peer.get().is_some() {
+        Sheet::Verify
+    } else if session.read_transfers(|state| state.incoming.is_some()) {
         Sheet::Incoming
     } else if session.pin_request.get().is_some() {
         Sheet::Pin
@@ -274,10 +280,19 @@ fn device_row(
         let fingerprint = fingerprint.clone();
         move || session.select(Some(fingerprint.clone()))
     };
+    let verify_label = {
+        let session = session.clone();
+        move || session.text("verify.action")
+    };
+    let verify_session = session.clone();
+    let verify_peer = peer;
     peer_row(peer, PeerRowKind::Sidebar)
         .selected(is_selected)
         // Behind a modal sheet no background row is a Tab stop.
         .focusable(move || sheet.get() == Sheet::None)
+        .verify(verify_label, move || {
+            verify_session.open_verify(verify_peer.get_untracked())
+        })
         .favorite(is_favorite, favorite_label, favorite_action)
         .on_press(press)
 }
@@ -722,12 +737,14 @@ fn sheet_overlay(session: Session, sheet: Memo<Sheet>, settings_trigger: Element
         }
         let width = match which {
             Sheet::Incoming => control::SHEET_INCOMING,
+            Sheet::Verify => control::SHEET_VERIFY,
             Sheet::Pin => control::SHEET_PIN,
             Sheet::Settings => control::SHEET_WIDE,
             Sheet::None => unreachable!(),
         };
         let content = match which {
             Sheet::Incoming => super::incoming::incoming_sheet(session.clone()).into_element(),
+            Sheet::Verify => super::verify::verify_sheet(session.clone()).into_element(),
             Sheet::Pin => super::pin::pin_sheet(session.clone()).into_element(),
             Sheet::Settings => {
                 super::settings::settings_sheet(session.clone(), settings_trigger).into_element()
@@ -742,7 +759,7 @@ fn sheet_overlay(session: Session, sheet: Memo<Sheet>, settings_trigger: Element
         // collapses to 0 height on macOS). The request sheets size to their
         // content.
         let scrolls = which == Sheet::Settings;
-        let show_close = which == Sheet::Pin;
+        let show_close = matches!(which, Sheet::Pin | Sheet::Verify);
         let scrim_press = {
             let session = session.clone();
             move || dismiss_sheet(&session, which)

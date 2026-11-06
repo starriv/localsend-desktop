@@ -13,7 +13,8 @@ use crate::model::{ComposerItem, Session};
 use crate::net::now_ms;
 use crate::ui::{
     ButtonKind, IconName, PeerRowKind, button, bytes, card_shadow, colors, control, device_tile,
-    floating_shadow, focus_ring, icon, icon_button, peer_row, radius, space, text_size,
+    floating_shadow, focus_ring, icon, icon_button, motion as timing, motion_ms, peer_row, radius,
+    space, text_size,
 };
 use nsh_core::element::input;
 use nsh_core::prelude::*;
@@ -73,6 +74,7 @@ pub fn send(session: Session) -> impl IntoElement {
     let composer_body = session.clone();
     let footer_when = session.clone();
     let footer_body = session.clone();
+    let flight_session = session.clone();
     let drag_cond = session.clone();
     let drag_overlay = session.clone();
 
@@ -121,6 +123,19 @@ pub fn send(session: Session) -> impl IntoElement {
             move || !footer_when.read_composer(|state| state.composer.is_empty()),
             move || footer(footer_body.clone()),
         ))
+        // One paper plane per started send: `dynamic` remakes the element when
+        // the epoch changes, so its entering motion plays again; it ends at
+        // opacity 0, inert, until the next send.
+        .child(dynamic({
+            let session = flight_session;
+            move || {
+                if session.flight_epoch.get() == 0 {
+                    view().into_element()
+                } else {
+                    flight().into_element()
+                }
+            }
+        }))
         // Drag highlight over a non-empty pane (the empty state highlights its
         // own dashed zone instead).
         .child(when(
@@ -203,6 +218,7 @@ fn header(session: Session) -> impl IntoElement {
 
 fn drop_zone(session: Session) -> impl IntoElement {
     let ui = ui();
+    let enter = motion().entering(drop_in());
     let pick_files = session.clone();
     let pick_folder = session.clone();
     let paste_files = session.clone();
@@ -234,18 +250,21 @@ fn drop_zone(session: Session) -> impl IntoElement {
         })
         .shadow(card_shadow())
         .dark(|style| style.shadow_none())
+        .transition_colors()
+        .duration(motion_ms(timing::HOVER_MS))
+        .ease_out()
         .child(
             view()
-                .size(px(44.0))
+                .size(px(48.0))
                 .items_center()
                 .justify_center()
                 .rounded(px(radius::TILE))
                 .bg(colors::ACCENT_TINT)
-                .child(icon(IconName::Upload).size(22.0).color(colors::ACCENT)),
+                .child(icon(IconName::Upload).size(24.0).color(colors::ACCENT)),
         )
         .child(
             text(move || title.text("send.drop_title"))
-                .text_size(px(text_size::TITLE))
+                .text_size(px(text_size::DISPLAY))
                 .font_weight(FontWeight::SEMIBOLD),
         )
         .child(
@@ -258,10 +277,11 @@ fn drop_zone(session: Session) -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .gap(px(space::SM))
-                .mt(px(space::XS))
+                .mt(px(space::MD))
                 .child(
+                    // One clear primary action; the rest stays quiet.
                     button(session.text("send.pick_files"))
-                        .kind(ButtonKind::Secondary)
+                        .kind(ButtonKind::Primary)
                         .on_press(move || pick_files.pick_files()),
                 )
                 .child(
@@ -282,6 +302,51 @@ fn drop_zone(session: Session) -> impl IntoElement {
                         .on_press(move || paste_files.paste_clipboard_files()),
                 ),
         )
+        .bind_motion(&enter)
+}
+
+/// The empty state's arrival: a short fade with a 6 pt rise.
+fn drop_in() -> MotionSpec {
+    let mut timing = KeyframeTiming::new(220.0);
+    timing.easing = Easing::EaseOut;
+    MotionSpec::new(timing)
+        .values(MotionChannel::Opacity, [0.0, 1.0])
+        .values(MotionChannel::TranslateY, [6.0, 0.0])
+}
+
+// ---------------------------------------------------------------------------
+// Send flight
+// ---------------------------------------------------------------------------
+
+/// The paper plane: it takes off straight up from the Send button and fades
+/// before the top of the pane.
+fn flight_spec() -> MotionSpec {
+    let mut timing = KeyframeTiming::new(1000.0);
+    timing.easing = Easing::EaseOut;
+    MotionSpec::new(timing)
+        .values(MotionChannel::Opacity, [0.0, 1.0, 1.0, 0.0])
+        // Straight up: a little horizontal drift keeps it from looking rigid.
+        .values(MotionChannel::TranslateX, [0.0, 2.0, 6.0, 10.0])
+        .values(MotionChannel::TranslateY, [0.0, -80.0, -230.0, -420.0])
+        .values(MotionChannel::Scale, [0.7, 1.0, 1.1, 0.9])
+        // The glyph points up-right; tilting it up makes it climb nose-first.
+        .values(MotionChannel::Rotate, [0.0, -10.0, -22.0, -34.0])
+}
+
+fn flight() -> impl IntoElement {
+    let spec = flight_spec();
+    let motion = motion().entering(spec);
+    view()
+        .absolute()
+        // Above the transfer card (64 pt + margins) that appears at the pane's
+        // bottom when the send starts; it would otherwise cover the take-off.
+        .right(px(108.0))
+        .bottom(px(120.0))
+        .pointer_events(PointerEvents::None)
+        // Decoration: screen readers must not announce the flight.
+        .accessibility_elements_hidden(|| true)
+        .child(icon(IconName::Send).size(36.0).color(colors::ACCENT))
+        .bind_motion(&motion)
 }
 
 // ---------------------------------------------------------------------------
@@ -303,8 +368,6 @@ fn composer_card(session: Session) -> impl IntoElement {
         .border_1()
         .border_color(colors::BORDER)
         .bg(colors::SURFACE)
-        .shadow(card_shadow())
-        .dark(|style| style.shadow_none())
         .child(
             text(move || label.text("send.add_text"))
                 .text_size(px(text_size::CAPTION))
@@ -348,8 +411,11 @@ fn composer_card(session: Session) -> impl IntoElement {
                         }),
                 )
                 .child(
+                    // The screen's primary action is Send (or Choose files
+                    // on the empty state); the draft's Add stays secondary so
+                    // there is never a second filled button on screen.
                     button(session.text("send.add"))
-                        .kind(ButtonKind::Primary)
+                        .kind(ButtonKind::Secondary)
                         .disabled(move || ui.get().text_draft.trim().is_empty())
                         .on_press(move || add_draft(&add, ui)),
                 ),
@@ -498,8 +564,6 @@ fn staged_row(session: Session, row: ReadSignal<(usize, ComposerItem)>) -> impl 
         .border_1()
         .border_color(colors::BORDER)
         .bg(colors::SURFACE)
-        .shadow(card_shadow())
-        .dark(|style| style.shadow_none())
         .hover(|style| style.bg(colors::HOVER))
         .child(
             view()

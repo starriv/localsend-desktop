@@ -132,6 +132,24 @@ const EN: &[(&str, &str)] = &[
     ("device.type.headless", "Headless"),
     ("device.type.server", "Server"),
     ("device.type.unknown", "Unknown"),
+    // Device verification: both devices compare these before relying on the
+    // other one's identity (LocalSend's Verify page: icons or text).
+    ("verify.action", "Verify"),
+    ("verify.title", "Verify device"),
+    ("verify.icons", "Icons"),
+    ("verify.text", "Text"),
+    (
+        "verify.question",
+        "Does it look the same on the other device?",
+    ),
+    (
+        "verify.hint",
+        "Built from both devices' certificate fingerprints; stop the transfer if they differ.",
+    ),
+    (
+        "verify.unavailable",
+        "The network is not running yet, so this device has no fingerprint.",
+    ),
     // Receive
     ("receive.discoverable", "Discoverable"),
     ("receive.pin", "Receive PIN"),
@@ -409,6 +427,20 @@ const ZH: &[(&str, &str)] = &[
     ("device.type.headless", "无界面"),
     ("device.type.server", "服务器"),
     ("device.type.unknown", "未知"),
+    // 设备验证：确认对方身份前，两边比对同一组图标或文字。
+    ("verify.action", "验证"),
+    ("verify.title", "验证设备"),
+    ("verify.icons", "图标"),
+    ("verify.text", "文本"),
+    ("verify.question", "在另一台设备上显示的内容相同吗？"),
+    (
+        "verify.hint",
+        "由两台设备的证书指纹生成；不一致时请停止传输。",
+    ),
+    (
+        "verify.unavailable",
+        "局域网服务尚未运行，暂时无法生成验证信息。",
+    ),
     ("receive.discoverable", "允许被发现"),
     ("receive.pin", "接收 PIN"),
     ("receive.pin_hint", "对方发送前需要输入此 PIN"),

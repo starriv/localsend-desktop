@@ -5,6 +5,7 @@
 pub mod controls;
 pub mod format;
 pub mod icons;
+pub mod material_icons;
 pub mod theme;
 
 pub use controls::{

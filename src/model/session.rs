@@ -111,6 +111,11 @@ pub struct Session {
     pub appearance: Signal<Appearance>,
     pub toast: Signal<Option<Toast>>,
     pub pin_request: Signal<Option<PinRequest>>,
+    /// Bumped when a send starts; the Send screen plays the paper plane once
+    /// per value (a signal, not a timer, so the view owns the animation).
+    pub flight_epoch: Signal<u64>,
+    /// The device whose verification sheet (combined fingerprint) is open.
+    pub verify_peer: Signal<Option<Peer>>,
     pub settings_open: Signal<bool>,
     /// A settings change needs a network restart but work is in flight; it is
     /// applied when the last transfer (or pending request) finishes. Views
@@ -171,6 +176,8 @@ impl Session {
             appearance: signal(appearance),
             toast: signal(None),
             pin_request: signal_with(None, SignalEquals::Never),
+            flight_epoch: signal(0_u64),
+            verify_peer: signal_with(None, SignalEquals::Never),
             settings_open: signal(false),
             pending_restart: signal(false),
             discovery_feedback: signal(false),
@@ -218,6 +225,10 @@ impl Session {
         self.apply_color_scheme(self.appearance.get_untracked());
         if std::env::var_os("LOCALSEND_DEMO").is_some() {
             self.seed_demo();
+            // Outside `seed_demo`: writing a signal can run its subscribers
+            // synchronously, and one that reads `AppState` would collide with
+            // the borrow the seeding holds.
+            seed_demo_identity(self);
             return;
         }
         // Tests run the real app in-process: without this they would bind the
@@ -437,6 +448,16 @@ impl Session {
         self.settings_open.set(open);
     }
 
+    /// Opens the verification sheet for `peer`: the combined fingerprint both
+    /// devices show under LocalSend's "Verify" page.
+    pub fn open_verify(&self, peer: Peer) {
+        self.verify_peer.set(Some(peer));
+    }
+
+    pub fn close_verify(&self) {
+        self.verify_peer.set(None);
+    }
+
     // --- composer ---------------------------------------------------------
 
     /// Add files and folders picked from the system dialog.
@@ -586,7 +607,12 @@ impl Session {
             return;
         };
         match handle.send(&peer, items, pin) {
-            Ok(_id) => self.clear_composer(),
+            Ok(_id) => {
+                self.clear_composer();
+                // The paper plane flies off once per started send.
+                self.flight_epoch
+                    .set(self.flight_epoch.get().wrapping_add(1));
+            }
             Err(error) => self.fail_error("error.send_failed", error),
         }
     }
@@ -903,6 +929,7 @@ impl Session {
         }
         self.handle.set(None);
         self.identity.set(None);
+        self.verify_peer.set(None);
         self.running.set(false);
         // The replacement node starts from the latest settings, so a deferred
         // settings restart must not fire again on top of it (M-02).
@@ -1055,6 +1082,7 @@ impl Session {
         }
         self.handle.set(None);
         self.identity.set(None);
+        self.verify_peer.set(None);
         self.running.set(false);
         // The actor's shutdown emits no terminal events for running transfers
         // or a pending decision, so finish them here or the UI would show a
@@ -1122,6 +1150,7 @@ impl Session {
         }
         self.handle.set(None);
         self.identity.set(None);
+        self.verify_peer.set(None);
         self.running.set(false);
         self.set_pending_restart(false);
         self.finalize_network_transfers();
@@ -1412,6 +1441,29 @@ fn demo_peers(count: usize) -> Vec<Peer> {
     }
     peers.truncate(count);
     peers
+}
+
+/// A demo has no node, so it has no certificate to derive an identity from;
+/// a stable fake one lets the verify sheet (which combines this device's
+/// fingerprint with the peer's) open in design/screenshot runs too. Called
+/// after [`Session::seed_demo`], so no `AppState` borrow is held when the
+/// signal runs its subscribers.
+fn seed_demo_identity(session: &Session) {
+    let alias = session.state.borrow().settings.alias.clone();
+    session.identity.set(Some(Peer {
+        fingerprint: demo_self_fingerprint(),
+        alias,
+        device_model: "Mac".to_string(),
+        address: None,
+        device_type: crate::net::DeviceType::Desktop,
+        is_self: true,
+    }));
+}
+
+/// The demo self device's fingerprint: 64 uppercase hex, as a real
+/// certificate hash would be.
+fn demo_self_fingerprint() -> String {
+    "9C4C0A5E".repeat(8)
 }
 
 fn demo_peer(alias: &str, model: &str, device_type: crate::net::DeviceType, online: bool) -> Peer {

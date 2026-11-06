@@ -13,5 +13,6 @@ pub mod settings;
 pub mod shell;
 pub mod toast;
 pub mod transfer;
+pub mod verify;
 
 pub use shell::shell;

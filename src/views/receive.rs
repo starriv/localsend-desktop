@@ -422,8 +422,8 @@ fn waiting(session: Session) -> impl IntoElement {
         .child(radar(session.clone()))
         .child(
             text(move || title.text("receive.waiting"))
-                .text_size(px(text_size::EMPHASIS))
-                .font_weight(FontWeight::MEDIUM),
+                .text_size(px(text_size::TITLE))
+                .font_weight(FontWeight::SEMIBOLD),
         )
         .child(
             text(move || hint.text("receive.waiting_hint"))

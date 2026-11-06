@@ -192,6 +192,8 @@ pub mod control {
     pub const SIDEBAR: f32 = 252.0;
     /// The incoming-request sheet's width.
     pub const SHEET_INCOMING: f32 = 448.0;
+    /// The verification sheet's width.
+    pub const SHEET_VERIFY: f32 = 448.0;
     /// The PIN sheet's width.
     pub const SHEET_PIN: f32 = 380.0;
     /// The settings sheet's width (and the detail sheet's).

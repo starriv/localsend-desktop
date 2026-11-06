@@ -295,6 +295,9 @@ fn card(session: Session) -> impl IntoElement {
     let content = snap;
     let complete = snap;
     let cancel_cond = snap;
+    let verify_cond = snap;
+    let verify_peer = snap;
+    let verify_session = session.clone();
     let content_session = session.clone();
     let cancel_session = session.clone();
     let dismiss_session = session.clone();
@@ -333,6 +336,17 @@ fn card(session: Session) -> impl IntoElement {
                 move || completed_content(session.clone(), complete)
             }),
         )
+        .child(when(move || verify_cond.get().active, {
+            let verify = verify_session.clone();
+            let peer = verify_peer;
+            move || {
+                let verify = verify.clone();
+                let peer = peer;
+                icon_button(IconName::Verified)
+                    .label(verify.text("verify.action"))
+                    .on_press(move || verify.open_verify(peer.get().peer.clone()))
+            }
+        }))
         .child(
             when(move || cancel_cond.get().active, {
                 let label = cancel_session.clone();
@@ -647,6 +661,8 @@ struct SectionData {
     direction: Direction,
     status: TransferStatus,
     label: SharedString,
+    /// The peer this transfer is with, for its verification page.
+    peer: Peer,
     files: Vec<FileRow>,
     /// Files beyond [`SHEET_FILES_SHOWN`] (summarized, not rendered).
     more_files: usize,
@@ -686,6 +702,15 @@ fn sheet_signature(state: &AppState) -> u64 {
             },
         );
         mix(&mut hash, transfer.file_count() as u64);
+        // The cached rows also show the peer's alias (and the section carries
+        // it for the verify action), so a rename must rebuild them.
+        for byte in transfer.peer.fingerprint.bytes() {
+            mix(&mut hash, u64::from(byte));
+        }
+        for byte in transfer.peer.alias.bytes() {
+            mix(&mut hash, u64::from(byte));
+        }
+        mix(&mut hash, 0xff);
         // Only the rendered rows matter; walking all 10,000 files per
         // progress tick was wasted work.
         for file in transfer.files.iter().take(SHEET_FILES_SHOWN) {
@@ -770,6 +795,7 @@ fn build_sections(session: &Session, state: &AppState) -> Vec<SectionData> {
             direction: transfer.direction,
             status: transfer.status,
             label,
+            peer: transfer.peer.clone(),
             files,
             more_files: transfer.file_count().saturating_sub(SHEET_FILES_SHOWN),
             texts: transfer
@@ -881,7 +907,10 @@ fn transfer_sheet(session: Session) -> impl IntoElement {
 }
 
 fn transfer_section(session: Session, data: SectionData) -> impl IntoElement {
+    let ui = ui();
     let badge_session = session.clone();
+    let verify = session.clone();
+    let verify_peer = data.peer.clone();
     let cancel = session.clone();
     let reveal = session.clone();
     let reveal_label = session.clone();
@@ -936,6 +965,18 @@ fn transfer_section(session: Session, data: SectionData) -> impl IntoElement {
                 )
                 .child(view().flex_1())
                 .child(status_badge(badge_session, status))
+                // The phone's Verify page is what the transfer waits on, so
+                // the action lives here too, not only next to the device.
+                .child(
+                    button(session.text("verify.action"))
+                        .kind(ButtonKind::Ghost)
+                        .icon(IconName::Verified)
+                        .on_press(move || {
+                            // The sheet would sit behind this modal one.
+                            ui.update(|state| state.open = false);
+                            verify.open_verify(verify_peer.clone());
+                        }),
+                )
                 .child(when(status == TransferStatus::Active, {
                     let cancel = cancel.clone();
                     move || {

@@ -160,9 +160,13 @@ cp LICENSE "$resources/LICENSE"
 cp NOTICE "$resources/NOTICE"
 # The core's Apache-2.0 text, kept separate from the app's MIT license.
 cp vendor/localsend/LICENSE "$resources/LICENSE-LocalSend-core"
+# The bundled Material Icons font's CC BY 4.0 license and attribution (see
+# NOTICE; the font arrives with that license from the Flutter SDK).
+cp assets/MaterialIcons_LICENSE.txt "$resources/LICENSE-MaterialIcons"
 # Readable by every user of the machine, like any other bundled resource.
-chmod 0644 "$resources/LICENSE" "$resources/NOTICE" "$resources/LICENSE-LocalSend-core"
-for file in LICENSE NOTICE LICENSE-LocalSend-core; do
+chmod 0644 "$resources/LICENSE" "$resources/NOTICE" "$resources/LICENSE-LocalSend-core" \
+    "$resources/LICENSE-MaterialIcons"
+for file in LICENSE NOTICE LICENSE-LocalSend-core LICENSE-MaterialIcons; do
     [ -f "$resources/$file" ] || die "missing bundled license: $resources/$file"
 done
 

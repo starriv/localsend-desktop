@@ -1015,6 +1015,9 @@ type Favorite = (Reactive<bool>, Reactive<SharedString>, Rc<dyn Fn()>);
 /// A reveal button: its accessible label and its action.
 type Reveal = (Reactive<SharedString>, Rc<dyn Fn()>);
 
+/// A verify action: its accessible label and what pressing it does.
+type Verify = (Reactive<SharedString>, Rc<dyn Fn()>);
+
 /// A device row: tile, alias (and subtitle), the optional favorite toggle.
 ///
 /// The one implementation of a peer row: the sidebar and the Send screen's
@@ -1028,6 +1031,7 @@ pub struct PeerRow {
     selected: Reactive<bool>,
     focusable: Reactive<bool>,
     favorite: Option<Favorite>,
+    verify: Option<Verify>,
     press: Option<Rc<dyn Fn()>>,
 }
 
@@ -1040,6 +1044,7 @@ pub fn peer_row(peer: impl IntoReactive<Peer>, kind: PeerRowKind) -> PeerRow {
         selected: Reactive::Static(false),
         focusable: Reactive::Static(true),
         favorite: None,
+        verify: None,
         press: None,
     }
 }
@@ -1080,6 +1085,17 @@ impl PeerRow {
         self
     }
 
+    /// Adds a verify action before the favorite toggle: its accessible label
+    /// and what pressing it does (LocalSend's "Verify" page for this peer).
+    pub fn verify(
+        mut self,
+        label: impl IntoReactive<SharedString>,
+        on_press: impl Fn() + 'static,
+    ) -> Self {
+        self.verify = Some((label.into_reactive(), Rc::new(on_press)));
+        self
+    }
+
     /// What choosing it does.
     pub fn on_press(mut self, on_press: impl Fn() + 'static) -> Self {
         self.press = Some(Rc::new(on_press));
@@ -1105,6 +1121,7 @@ impl IntoElement for PeerRow {
         let alias_chooser = self.peer.clone();
         let subtitle = self.subtitle;
         let favorite = self.favorite;
+        let verify = self.verify;
         view()
             .relative()
             .h(px(if sidebar {
@@ -1201,6 +1218,31 @@ impl IntoElement for PeerRow {
                         || icon(IconName::Check).size(16.0).color(colors::ACCENT),
                     ))
             })
+            .children(verify.map(|(label, open)| {
+                let hint = label.clone();
+                view()
+                    .child(
+                        icon_button(IconName::Verified)
+                            .size(20.0)
+                            .label(label)
+                            .color(|| colors::FAINT)
+                            .on_press(move || open()),
+                    )
+                    .tooltip(
+                        view()
+                            .px(px(space::XS + 2.0))
+                            .py(px(2.0))
+                            .rounded(px(radius::CHIP))
+                            .bg(colors::SURFACE)
+                            .border_1()
+                            .border_color(colors::BORDER)
+                            .child(
+                                text(move || hint.get())
+                                    .text_size(px(text_size::CAPTION))
+                                    .text_color(colors::TEXT),
+                            ),
+                    )
+            }))
             .children(favorite.map(|(is_favorite, label, toggle)| {
                 icon_button(IconName::Pin)
                     .size(20.0)

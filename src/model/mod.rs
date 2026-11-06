@@ -3,6 +3,7 @@
 
 pub mod session;
 pub mod state;
+pub mod verify;
 
 pub use crate::net::Direction;
 pub use session::{PinRequest, Session, Toast};

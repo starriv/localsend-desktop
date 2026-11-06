@@ -29,6 +29,9 @@ pub mod views;
 /// `localsend/client`.
 #[native_module("localsend/client")]
 fn native(registry: &mut Registry) {
+    // Ships `assets/` with the app and has the engine register the fonts in it
+    // before the first frame (the Material Icons font of the verify page).
+    registry.assets(assets!());
     registry.register::<App>();
 }
 
