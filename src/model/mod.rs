@@ -3,6 +3,7 @@
 
 pub mod session;
 pub mod state;
+pub mod updater;
 pub mod verify;
 
 pub use crate::net::Direction;
@@ -10,3 +11,4 @@ pub use session::{PinRequest, Session, Toast};
 pub use state::{
     AppState, ComposerItem, IncomingRequest, Settings, Transfer, TransferStatus, View,
 };
+pub use updater::UpdateStatus;

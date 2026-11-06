@@ -11,6 +11,8 @@
 //! - [`views`] are the screens, composed from [`ui`] and [`model`].
 //! - [`platform`] holds desktop integration (menus, dialogs, window,
 //!   notifications, clipboard).
+//! - [`update`] checks the GitHub releases for a newer version and installs
+//!   it (signed manifest, verified download).
 //!
 //! `App` is the root component named by `nsh.json`; it owns one
 //! [`model::Session`] and mounts the shell.
@@ -23,6 +25,7 @@ pub mod model;
 pub mod net;
 pub mod platform;
 pub mod ui;
+pub mod update;
 pub mod views;
 
 /// The app's UI set (`nsh.json` `"rust"`): what a TSX entry may import from

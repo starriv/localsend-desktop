@@ -1,6 +1,6 @@
 [package]
 name = "localsend-desktop"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
 rust-version = "1.97"
 publish = false
@@ -49,6 +49,17 @@ tracing = "0.1"
 # Installed by `src/logging.rs` (stderr + file, RUST_LOG via EnvFilter).
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+
+# The self-updater (src/update): the release manifest is fetched over HTTPS
+# with the system's trust store and verified with Ed25519; the installer is
+# streamed to disk and checked with SHA-256. Every one of these crates (and
+# these features) is already in the graph through the vendored core, so they
+# add no new code to the build.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+ed25519-dalek = { version = "3", default-features = false }
+sha2 = "0.11"
+semver = "1"
 
 [dev-dependencies]
 # The network e2e tests spawn the built CLI with tokio::process.

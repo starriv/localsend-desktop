@@ -1,9 +1,10 @@
 name: Release
 
 # Builds the installers and attaches them to a GitHub Release: a macOS .app
-# (zip and dmg) and the Windows x64 portable build. Dispatch it from the
-# Actions tab or push a `v*` tag. The version comes from Cargo.toml and
-# nsh.json. Builds are ad-hoc signed (macOS) / unsigned (Windows), not
+# (zip and dmg) and the Windows x64 installer and portable build, then the
+# signed update manifest (latest.json + .sig) the app's updater reads.
+# Dispatch it from the Actions tab or push a `v*` tag. The version comes from
+# Cargo.toml and nsh.json. Builds are ad-hoc signed (macOS) / unsigned (Windows), not
 # notarized.
 
 on:
@@ -232,3 +233,81 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ needs.prepare.outputs.tag }}" dist/* --clobber
+
+  # Runs last, once every installer is on the release: the app only offers a
+  # release that has `latest.json`, so a release whose builds are still
+  # running (or failed) is never offered half-uploaded. The manifest is
+  # signed with the Ed25519 key in the UPDATE_SIGNING_KEY secret (PEM); the
+  # app embeds the public half (src/update/mod.rs, PUBLIC_KEY).
+  manifest:
+    name: update manifest
+    needs: [prepare, macos, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download the checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sums"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.sha256' --dir "$RUNNER_TEMP/sums"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/assets.json"
+
+      - name: Write latest.json
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          entry() {
+            name="$1"
+            sum_file="$RUNNER_TEMP/sums/$name.sha256"
+            test -f "$sum_file" || { echo "::error::no $name.sha256 on the release"; exit 1; }
+            sha=$(awk '{print tolower($1)}' "$sum_file")
+            size=$(jq -r --arg n "$name" '.assets[] | select(.name == $n) | .size' "$RUNNER_TEMP/assets.json")
+            test -n "$size" || { echo "::error::no $name on the release"; exit 1; }
+            jq -n --arg name "$name" --arg url "$base/$name" --arg sha "$sha" --argjson size "$size" \
+              '{name: $name, url: $url, sha256: $sha, size: $size}'
+          }
+          mac=$(entry "LocalSend-${VERSION}-macos-arm64.zip")
+          win=$(entry "LocalSend-${VERSION}-windows-x86_64-setup.exe")
+          mkdir -p dist
+          jq -n --arg version "$VERSION" \
+            --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" \
+            --argjson mac "$mac" --argjson win "$win" \
+            '{schema: 1, version: $version, notes_url: $notes,
+              assets: {"macos-aarch64": $mac, "windows-x86_64": $win}}' > dist/latest.json
+          cat dist/latest.json
+
+      - name: Sign latest.json
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          test -n "$UPDATE_SIGNING_KEY" || { echo "::error::the UPDATE_SIGNING_KEY secret is not set"; exit 1; }
+          key="$RUNNER_TEMP/update-key.pem"
+          umask 077
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key"
+          openssl pkeyutl -sign -inkey "$key" -rawin -in dist/latest.json -out dist/latest.json.sig
+          # The secret must be the key the app trusts: compare its public half
+          # with PUBLIC_KEY in src/update/mod.rs, then verify the signature.
+          openssl pkey -in "$key" -pubout -out "$RUNNER_TEMP/update-key.pub"
+          signing=$(openssl pkey -pubin -in "$RUNNER_TEMP/update-key.pub" -outform DER | tail -c 32 | xxd -p -c 32)
+          embedded=$(python3 -c 'import re,sys; s=open("src/update/mod.rs").read(); b=re.search(r"PUBLIC_KEY: \[u8; 32\] = \[(.*?)\];", s, re.S).group(1); print("".join(x[2:] for x in re.findall(r"0x[0-9a-f]{2}", b)))')
+          if [ "$signing" != "$embedded" ]; then
+            echo "::error::UPDATE_SIGNING_KEY ($signing) is not the key the app embeds ($embedded)"
+            exit 1
+          fi
+          openssl pkeyutl -verify -pubin -inkey "$RUNNER_TEMP/update-key.pub" -rawin \
+            -in dist/latest.json -sigfile dist/latest.json.sig
+          rm -f "$key"
+          test "$(wc -c < dist/latest.json.sig)" -eq 64
+
+      - name: Upload the manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release upload "$TAG" dist/latest.json dist/latest.json.sig --repo "$GITHUB_REPOSITORY" --clobber

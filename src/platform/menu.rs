@@ -21,8 +21,8 @@ use std::rc::Rc;
 
 /// LocalSend's website, as the Help menu opens it.
 pub const WEBSITE: &str = "https://localsend.org";
-/// LocalSend's source repository, as the Help menu opens it.
-pub const SOURCE: &str = "https://github.com/localsend/localsend";
+/// This app's source repository, as the Help menu opens it.
+pub const SOURCE: &str = crate::update::REPOSITORY_URL;
 
 /// Installs the application menu, and keeps it current.
 ///

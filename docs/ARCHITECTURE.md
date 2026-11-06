@@ -36,6 +36,7 @@ localsend-desktop/
 │  ├─ model/
 │  │  ├─ state.rs            AppState + reducer (pure modulo injected clock)
 │  │  └─ session.rs          Session: signals, commands, persistence
+│  ├─ update/                self-update: signed manifest, download, install
 │  ├─ i18n.rs                EN/ZH string tables
 │  ├─ ui/                    design system (tokens, icons, controls)
 │  ├─ views/                 shell + screens + overlays

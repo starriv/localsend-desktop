@@ -12,10 +12,18 @@
 ; The packaging directory is self-contained (LocalSend.exe plus its `nsh`
 ; assets), so the installer only copies it and creates the shortcuts.
 ;
+;
+; In-app updates run this installer as `setup.exe /S /UPDATE` and then quit
+; (src/update/install.rs): /UPDATE waits for the running LocalSend.exe to
+; exit, keeps the shortcuts the user removed removed, and starts the app again
+; when the files are in place.
+;
 ; Kept ASCII-only: NSIS reads `.nsi` without a BOM as ANSI, and the standard
 ; page texts of both languages come from MUI's language files.
 
 !include "MUI2.nsh"
+!include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 !ifndef APP_VERSION
   !define APP_VERSION "1.0.0"
@@ -66,11 +74,42 @@ VIAddVersionKey "LegalCopyright" "MIT License"
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
+Var Updating
+
 Function .onInit
+  StrCpy $Updating 0
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/UPDATE" $R1
+  ${IfNot} ${Errors}
+    StrCpy $Updating 1
+  ${EndIf}
   !insertmacro MUI_LANGDLL_DISPLAY
 FunctionEnd
 
+; Waits up to 30 s for a running LocalSend.exe to exit: a running image cannot
+; be opened for writing, so the loop ends once the app has quit.
+Function WaitForApp
+  StrCpy $R2 0
+  ${DoWhile} ${FileExists} "$INSTDIR\LocalSend.exe"
+    ClearErrors
+    FileOpen $R3 "$INSTDIR\LocalSend.exe" a
+    ${IfNot} ${Errors}
+      FileClose $R3
+      ${Break}
+    ${EndIf}
+    IntOp $R2 $R2 + 1
+    ${If} $R2 > 150
+      ${Break}
+    ${EndIf}
+    Sleep 200
+  ${Loop}
+FunctionEnd
+
 Section "LocalSend" SEC_MAIN
+  ${If} $Updating == 1
+    Call WaitForApp
+  ${EndIf}
   SetOutPath "$INSTDIR"
   File /r "${SOURCE_DIR}\*.*"
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -78,7 +117,9 @@ Section "LocalSend" SEC_MAIN
   CreateDirectory "$SMPROGRAMS\LocalSend"
   CreateShortCut "$SMPROGRAMS\LocalSend\LocalSend.lnk" "$INSTDIR\LocalSend.exe"
   CreateShortCut "$SMPROGRAMS\LocalSend\Uninstall LocalSend.lnk" "$INSTDIR\uninstall.exe"
-  CreateShortCut "$DESKTOP\LocalSend.lnk" "$INSTDIR\LocalSend.exe"
+  ${If} $Updating == 0
+    CreateShortCut "$DESKTOP\LocalSend.lnk" "$INSTDIR\LocalSend.exe"
+  ${EndIf}
 
   WriteRegStr HKCU "Software\LocalSend" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\LocalSend" "DisplayName" "LocalSend"
@@ -89,6 +130,11 @@ Section "LocalSend" SEC_MAIN
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\LocalSend" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\LocalSend" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\LocalSend" "NoRepair" 1
+
+  ; A silent install shows no finish page (and no "Start LocalSend" box).
+  ${If} $Updating == 1
+    Exec '"$INSTDIR\LocalSend.exe"'
+  ${EndIf}
 SectionEnd
 
 Section "Uninstall"

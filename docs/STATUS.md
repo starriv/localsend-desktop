@@ -1,7 +1,9 @@
 # Status
 
 What is implemented, what was verified, and what is deliberately not there.
-Last updated 2026-11-06 for the 1.0.1 release: device verification (LocalSend's
+Last updated 2026-11-07 for the 1.0.2 release: self-update (signed
+`latest.json` manifest, background download, "Restart to update"). 1.0.1
+added device verification (LocalSend's
 combined fingerprint, Material icon view and text), the send/receive design
 pass (paper-plane flight, flatter lists, primary-action hierarchy), the
 CC BY 4.0 Material Icons font, and the GitHub Actions build + release workflow
@@ -65,7 +67,8 @@ Remaining items are upstream/credential limitations, listed below.
 | Transfers UI | bottom progress card (bytes/speed/ETA/cancel), detail sheet, completed state with Open/Reveal |
 | Device verification | combined fingerprint (both certificates, sorted) as LocalSend's 16 Material icons or as text; 260-entry icon alphabet and the CC BY 4.0 Material Icons font are bundled; entries on device rows, incoming requests and transfer details |
 | History | grouped by day, persisted (max 100), open/reveal/copy, clear, schema-versioned with quota-aware trimming |
-| Settings | alias, device type, discoverable, PIN, save folder, encryption toggle, auto-accept, appearance, language, run-in-background; changes that need a node restart are deferred while a transfer runs |
+| Updates | daily check of the signed `latest.json` on GitHub releases (Ed25519), automatic download with SHA-256 check, "Restart to update" (macOS bundle swap, Windows silent NSIS install); portable/read-only copies link to the release page |
+| Settings | alias, device type, discoverable, PIN, save folder, encryption toggle, auto-accept, appearance, language, run-in-background, automatic updates; changes that need a node restart are deferred while a transfer runs |
 | Desktop | hidden title bar + traffic-light inset, application menu with shortcuts, file dialogs, clipboard (text + Finder files), open/reveal, notifications hook (see gaps), close-to-background policy, menu bar item (macOS: devices, status, recent transfers, Open/Quit; the Dock icon hides while the window is closed), device verification sheet (combined fingerprint as LocalSend's 16 Material icons or as text), quit confirmation during transfers |
 | i18n | English + Simplified Chinese, key/placeholder parity enforced by tests |
 | Design | custom Rust design system over `nsh-base`: tokens, canvas icon set, buttons/toggles/segmented/progress/rings/device tiles/badges, light and dark, WCAG AA text contrast |
@@ -122,6 +125,11 @@ Remaining items are upstream/credential limitations, listed below.
     after quit and relaunch).
 
 ## Known gaps / not implemented
+
+- **Updates and macOS permissions**: the self-updater replaces the `.app` in place, but
+  release builds are ad-hoc signed, so every version has a different code identity and
+  macOS may ask for Local Network access again after an update. A Developer ID signature
+  (`package-macos.sh --sign … --notarize`) keeps the identity stable.
 
 - **Notifications**: nsh 0.4.0 on crates.io predates `nsh_core::notifications`; the module
   is a documented no-op (`platform::notify::available() == false`). In-app toasts and the

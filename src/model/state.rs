@@ -273,6 +273,10 @@ pub struct Settings {
     /// Keep running in the background when the window closes.
     #[serde(default = "default_true")]
     pub run_in_background: bool,
+    /// Check GitHub for a newer release once a day and download it in the
+    /// background (see `crate::update`).
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
 }
 
 impl Default for Settings {
@@ -292,6 +296,7 @@ impl Default for Settings {
             quick_save_favorites_only: false,
             favorites: Vec::new(),
             run_in_background: default_true(),
+            auto_update: default_true(),
         }
     }
 }

@@ -86,6 +86,15 @@ fn confirm_quit(session: Session) {
     });
 }
 
+/// Starts installing the downloaded update and quits so it can replace the
+/// app (the installer relaunches it). Refused, with a toast, while a transfer
+/// is running: the update waits instead of cutting it off.
+pub fn restart_to_update(session: &Session) {
+    if session.launch_update() {
+        quit_now(session);
+    }
+}
+
 /// Flushes the session, then terminates: `quit_app()` on macOS, and window
 /// close (which ends the process when there is no keep-alive) elsewhere.
 fn quit_now(session: &Session) {

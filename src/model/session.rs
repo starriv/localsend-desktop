@@ -7,6 +7,7 @@
 
 use crate::i18n::{self, Language};
 use crate::model::state::{HISTORY_LIMIT, HISTORY_SCHEMA, SETTINGS_SCHEMA, default_downloads};
+use crate::model::updater::{UpdateStatus, Updater};
 use crate::model::{AppState, ComposerItem, Settings, Transfer, TransferStatus, View};
 use crate::net::{self, Handle, Node, NodeConfig, Peer, TransferEvent};
 use crate::ui::theme::Appearance;
@@ -121,6 +122,10 @@ pub struct Session {
     /// applied when the last transfer (or pending request) finishes. Views
     /// show "applies after the current transfer" while this is set (M-02).
     pub pending_restart: Signal<bool>,
+    /// What the self-updater is doing (see `model::updater`).
+    pub update_status: Signal<UpdateStatus>,
+    /// The verified update waiting for "Restart to update".
+    pub(crate) updater: Rc<RefCell<Updater>>,
     /// Bounded foreground feedback, independent of the background service.
     discovery_feedback: Signal<bool>,
     discovery_feedback_epoch: Rc<Cell<u64>>,
@@ -180,6 +185,8 @@ impl Session {
             verify_peer: signal_with(None, SignalEquals::Never),
             settings_open: signal(false),
             pending_restart: signal(false),
+            update_status: signal(UpdateStatus::Idle),
+            updater: Rc::new(RefCell::new(Updater::default())),
             discovery_feedback: signal(false),
             discovery_feedback_epoch: Rc::new(Cell::new(0)),
             owner: Owner::current(),
@@ -237,6 +244,7 @@ impl Session {
             return;
         }
         self.start_network();
+        self.start_update_checks();
     }
 
     pub fn task<T: 'static>(&self, future: impl Future<Output = T> + 'static) -> Spawned<T> {

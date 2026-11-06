@@ -159,6 +159,50 @@ windows`) to a GitHub Release — portable zip and an NSIS installer built from
 `scripts/windows-installer.nsi` — each with a `.sha256`; dispatch it from the
 Actions tab or push a `v*` tag.
 
+## Updates
+
+The app updates itself from GitHub releases (`src/update/`, `src/model/updater.rs`).
+The release workflow's last job, `manifest`, runs once every installer is on the
+release and uploads:
+
+- `latest.json`: the version, the release page and, per platform
+  (`macos-aarch64`, `windows-x86_64`), the installer's URL, size and SHA-256
+  (from the `.sha256` assets);
+- `latest.json.sig`: the raw 64-byte Ed25519 signature of `latest.json`'s
+  exact bytes.
+
+The app fetches both from `releases/latest/download/` (no API call), verifies
+the signature against `PUBLIC_KEY` in `src/update/mod.rs`, then downloads the
+installer and checks its size and SHA-256. A release without `latest.json`
+(still building, or the job failed) is not offered.
+
+**Signing key.** The private key is the `UPDATE_SIGNING_KEY` repository secret
+(PEM). The job fails when the secret is missing or is not the key the app
+embeds. To rotate it:
+
+```sh
+openssl genpkey -algorithm ed25519 -out update-signing-key.pem
+openssl pkey -in update-signing-key.pem -pubout -outform DER | tail -c 32 | xxd -p -c 32
+gh secret set UPDATE_SIGNING_KEY < update-signing-key.pem
+```
+
+then put the printed 32 bytes in `PUBLIC_KEY` and release that build signed with
+the **old** key: installed copies only trust the key they were built with.
+Keep the PEM in a password manager; losing it means users must reinstall by hand.
+
+**Installing.** macOS unpacks the `.zip`, checks its bundle id, version and
+`codesign --verify`, and a detached script swaps the `.app` once the app has
+quit, then reopens it. Windows runs the installer with `/S /UPDATE` (it waits
+for `LocalSend.exe` to exit and relaunches it). Copies that cannot replace
+themselves (a `cargo run` build, the Windows portable zip, a translocated or
+read-only bundle) link to the release page instead.
+
+**Testing locally.** `LOCALSEND_UPDATE_MANIFEST=http://127.0.0.1:8765/latest.json`
+points the updater at a local server (plain HTTP is allowed only with it);
+the manifest still has to be signed with the real key.
+`LOCALSEND_NO_UPDATE=1` turns the updater off (as do `LOCALSEND_DEMO` and
+`LOCALSEND_OFFLINE`).
+
 The scripts use the `cargo` and `nsh` on your `PATH`; nothing else is required.
 
 ## Troubleshooting

@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "localsend-desktop"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2409,6 +2409,7 @@ dependencies = [
  "chrono",
  "dirs",
  "dispatch2",
+ "ed25519-dalek",
  "futures-util",
  "gethostname",
  "libc",
@@ -2423,8 +2424,12 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "pem 4.0.0",
+ "reqwest",
+ "rustls",
+ "semver",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "tempfile",
  "tokio",
  "tokio-util",

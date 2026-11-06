@@ -10,6 +10,8 @@
 
 use crate::i18n::Language;
 use crate::model::Session;
+use crate::model::UpdateStatus;
+use crate::model::updater::{failure_key, manual_key};
 use crate::net::DeviceType;
 use crate::ui::{
     Appearance, ButtonKind, IconName, button, colors, control, radius, segmented, space, text_size,
@@ -474,6 +476,9 @@ fn about_section(session: Session) -> impl IntoElement {
         &[("version", session.protocol_version().to_string())],
     );
     let github = session.clone();
+    let auto_update = session.clone();
+    let auto_update_label = session.clone();
+    let auto_update_change = session.clone();
     section(
         session.text("settings.about"),
         vec![
@@ -486,12 +491,27 @@ fn about_section(session: Session) -> impl IntoElement {
                     .on_press(move || {
                         let session = github.clone();
                         session.task(async move {
-                            let _ = open_url("https://github.com/localsend/localsend").await;
+                            let _ = open_url(crate::update::REPOSITORY_URL).await;
                         });
                     })
                     .into_element(),
                 None,
             ),
+            row(
+                session.text("settings.auto_update"),
+                session.text("settings.auto_update_hint"),
+                toggle(move || auto_update.read_settings(|state| state.settings.auto_update))
+                    .label(auto_update_label.text("settings.auto_update"))
+                    .on_change(move |value| {
+                        auto_update_change.update_settings(|settings| settings.auto_update = value);
+                        if value {
+                            auto_update_change.check_for_updates(false);
+                        }
+                    })
+                    .into_element(),
+                None,
+            ),
+            update_row(&session),
             row(
                 SharedString::default(),
                 protocol,
@@ -500,6 +520,103 @@ fn about_section(session: Session) -> impl IntoElement {
             ),
         ],
     )
+}
+
+/// The update row: what the updater is doing, and the one action that fits
+/// (check, open the release page, restart to update).
+fn update_row(session: &Session) -> AnyElement {
+    let status = session.update_status;
+    let note_session = session.clone();
+    let label_session = session.clone();
+    let press_session = session.clone();
+    let note = computed(move || update_note(&note_session, &status.get()));
+    let has_note = computed(move || !note.get().is_empty());
+    let note_element = when(
+        move || has_note.get(),
+        move || {
+            text(move || note.get())
+                .text_size(px(text_size::CAPTION))
+                .text_color(colors::MUTED)
+                .number_of_lines(2)
+        },
+    )
+    .into_element();
+    let action = button(move || update_action_label(&label_session, &status.get()))
+        .kind(ButtonKind::Secondary)
+        .small()
+        .disabled(move || status.get().busy())
+        .on_press(move || {
+            let session = press_session.clone();
+            match session.update_status.get_untracked() {
+                UpdateStatus::Ready { .. } => crate::platform::quit::restart_to_update(&session),
+                UpdateStatus::Manual { page, .. } => {
+                    session.task_detached(async move {
+                        let _ = open_url(page).await;
+                    });
+                }
+                status if status.busy() => {}
+                _ => session.check_for_updates(true),
+            }
+        })
+        .into_element();
+    row(
+        session.text("settings.update"),
+        SharedString::default(),
+        action,
+        Some(note_element),
+    )
+}
+
+/// The line under "Software update".
+fn update_note(session: &Session, status: &UpdateStatus) -> SharedString {
+    match status {
+        UpdateStatus::Idle => SharedString::default(),
+        UpdateStatus::Checking => session.text("update.checking"),
+        UpdateStatus::UpToDate => session.text("update.up_to_date"),
+        UpdateStatus::Downloading {
+            version,
+            received,
+            total,
+        } => {
+            let percent = (*received * 100).checked_div(*total).unwrap_or(0).min(100);
+            fill(
+                &session.text("update.downloading"),
+                &[
+                    ("version", version.clone()),
+                    ("percent", percent.to_string()),
+                ],
+            )
+        }
+        UpdateStatus::Ready { version } => fill(
+            &session.text("update.ready"),
+            &[("version", version.clone())],
+        ),
+        UpdateStatus::Manual {
+            version, reason, ..
+        } => {
+            let available = fill(
+                &session.text("update.available"),
+                &[("version", version.clone())],
+            );
+            format!("{available} · {}", session.text(manual_key(*reason))).into()
+        }
+        UpdateStatus::Installing => session.text("update.installing"),
+        UpdateStatus::Failed(kind) => session.text(failure_key(*kind)),
+    }
+}
+
+/// The update row's button label.
+fn update_action_label(session: &Session, status: &UpdateStatus) -> SharedString {
+    match status {
+        UpdateStatus::Checking => session.text("update.checking"),
+        UpdateStatus::Downloading { .. } => session.text("update.downloading_button"),
+        UpdateStatus::Ready { .. } => session.text("update.restart"),
+        UpdateStatus::Manual { .. } => session.text("update.download_page"),
+        UpdateStatus::Installing => session.text("update.installing"),
+        UpdateStatus::Idle | UpdateStatus::UpToDate | UpdateStatus::Failed(_) => {
+            session.text("update.check")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
