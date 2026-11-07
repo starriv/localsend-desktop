@@ -64,8 +64,13 @@ pub fn file_url(path: impl AsRef<Path>) -> String {
 /// The local path of a `file:` URL; `None` for another host or an empty URL.
 ///
 /// Finder copies percent-encoded URLs (`file:///Users/me/My%20File.pdf`); a
-/// platform that reports plain paths is accepted as-is.
+/// platform that reports plain paths is accepted as-is. A copy can also carry
+/// a file reference URL (`file:///.file/id=…`), which is resolved through
+/// AppKit first ([`super::urls`]).
 fn path_from_file_url(url: &str) -> Option<PathBuf> {
+    if let Some(path) = super::urls::resolved_reference_path(url) {
+        return Some(path);
+    }
     let Some(rest) = url.strip_prefix("file:") else {
         return (!url.is_empty()).then(|| PathBuf::from(url));
     };
@@ -159,6 +164,14 @@ mod tests {
         );
         // Another host and an empty value are not local files.
         assert_eq!(path_from_file_url("file://otherhost/tmp/x"), None);
+        assert_eq!(
+            path_from_file_url("file://otherhost/etc/hosts#/.file/id=x"),
+            None
+        );
+        assert_eq!(
+            path_from_file_url("file://otherhost/tmp/.file/id=abc"),
+            None
+        );
         assert_eq!(path_from_file_url(""), None);
     }
 

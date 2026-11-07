@@ -97,6 +97,10 @@ pub fn send(session: Session) -> impl IntoElement {
                 .filter_map(|uri| file_url_to_path(uri))
                 .collect();
             if paths.is_empty() {
+                // A drop that carried nothing usable: log what the system sent,
+                // so a URL form the decoder does not know is diagnosable (the
+                // toast only says that nothing was added).
+                tracing::warn!(uris = ?event.uris, "the drop carried no local file path");
                 drop.fail(drop.text("send.nothing_added"));
             } else {
                 drop.add_paths(paths);
@@ -998,8 +1002,13 @@ impl ComposerItem {
 /// Decodes a `file:` URL dropped by the system into a path.
 ///
 /// `uris` are percent-encoded `file:` URLs (`file:///Users/me/a%20b.txt`), and
-/// a folder is just another path: [`Session::add_paths`] expands it.
+/// a folder is just another path: [`Session::add_paths`] expands it. A Finder
+/// drag can instead carry a file reference URL (`file:///.file/id=…`), which
+/// names no path until AppKit resolves it; see [`crate::platform::urls`].
 pub(crate) fn file_url_to_path(url: &str) -> Option<PathBuf> {
+    if let Some(path) = crate::platform::urls::resolved_reference_path(url) {
+        return Some(path);
+    }
     let rest = url.strip_prefix("file://")?;
     // `file://localhost/path` and `file:///path` are the same file.
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);
@@ -1046,6 +1055,34 @@ mod tests {
         // Not a file URL, or an invalid escape: nothing is staged.
         assert_eq!(file_url_to_path("https://example.com/a"), None);
         assert_eq!(file_url_to_path("file:///bad%zz"), None);
+    }
+
+    /// Finder puts file reference URLs (`file:///.file/id=…`) on a drag
+    /// pasteboard: they name no path until AppKit resolves them, which a plain
+    /// `file:` decode cannot do. This is the drop that used to stage nothing.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_finder_reference_url_is_resolved() {
+        use objc2_foundation::{NSString, NSURL};
+
+        let directory =
+            std::env::temp_dir().join(format!("localsend-drop-ref-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp directory");
+        let file = directory.join("dropped.txt");
+        std::fs::write(&file, b"x").expect("temp file");
+
+        let path_url =
+            NSURL::fileURLWithPath(&NSString::from_str(file.to_str().expect("utf-8 path")));
+        let reference = path_url.fileReferenceURL().expect("reference URL");
+        let uri = reference
+            .absoluteString()
+            .expect("absolute string")
+            .to_string();
+
+        let resolved = file_url_to_path(&uri).and_then(|path| std::fs::canonicalize(path).ok());
+        assert_eq!(resolved, std::fs::canonicalize(&file).ok());
+
+        std::fs::remove_dir_all(&directory).ok();
     }
 
     #[test]

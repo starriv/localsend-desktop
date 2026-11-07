@@ -8,7 +8,7 @@
 //! [`TransferEvent`] channel — nothing here holds UI state.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -57,6 +57,56 @@ pub const MAX_DEVICE_TABLE: usize = 500;
 /// evicts (BLOCKED-UPSTREAM), so this caps its growth under a register flood
 /// (at most one entry per interval) while a real device still gets in.
 pub const EVICTION_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How long after start the automatic fallback scan may first run: multicast
+/// and the register probes get this long to show a peer before the app starts
+/// probing every address in its `/24` itself.
+const SCAN_FIRST_DELAY: Duration = Duration::from_secs(12);
+
+/// How often the automatic fallback scan may run while no peer is visible.
+///
+/// A peer that is reachable over HTTP but missed by multicast (an access point
+/// that drops the announcements, a VPN that takes the route) is still found
+/// this way; networks where multicast works only pay for it when the list is
+/// empty. A scan that found nothing doubles the wait up to
+/// [`SCAN_MAX_INTERVAL`], so an empty network is probed less and less; a manual
+/// refresh resets the wait.
+const SCAN_INTERVAL: Duration = Duration::from_secs(45);
+
+/// The longest wait between automatic fallback scans.
+const SCAN_MAX_INTERVAL: Duration = Duration::from_secs(300);
+
+/// How often the fallback scan checks whether it is due, or was asked to run.
+const SCAN_TICK: Duration = Duration::from_secs(3);
+
+/// What the fallback scan and the peer publisher share.
+#[derive(Default)]
+struct ScanFallback {
+    /// Peers currently shown: the automatic scan only runs when this is zero.
+    visible: AtomicUsize,
+    /// A manual refresh asked for a scan now, whatever is visible.
+    requested: AtomicBool,
+    /// Wakes the scan task for a manual refresh.
+    wake: tokio::sync::Notify,
+}
+
+impl ScanFallback {
+    fn set_visible(&self, count: usize) {
+        self.visible.store(count, Ordering::Relaxed);
+    }
+
+    fn request(&self) {
+        self.requested.store(true, Ordering::Relaxed);
+        self.wake.notify_one();
+    }
+}
+
+/// Whether the automatic fallback scan is due: nothing is shown and the last
+/// scan is older than the current wait (`interval`, which grows while scans
+/// find nothing).
+fn scan_due(visible: usize, last: Option<Instant>, now: Instant, interval: Duration) -> bool {
+    visible == 0 && last.is_none_or(|last| now.duration_since(last) >= interval)
+}
 
 /// The app-side device table guard: bounds the number of distinct
 /// fingerprints from peer registrations (NET-02). The core's discovery store
@@ -144,6 +194,8 @@ pub struct DiscoveryRuntime {
     failed: Arc<AtomicBool>,
     tasks: Vec<JoinHandle<()>>,
     refresh: Arc<tokio::sync::Notify>,
+    /// The fallback scan's shared state (see [`ScanFallback`]).
+    scan: Arc<ScanFallback>,
 }
 
 impl DiscoveryRuntime {
@@ -159,6 +211,7 @@ impl DiscoveryRuntime {
         let (update_tx, mut update_rx) = mpsc::channel::<DiscoveryEvent>(256);
         let (stop_tx, stop_rx) = oneshot::channel();
         let cancel = CancellationToken::new();
+        let scan = Arc::new(ScanFallback::default());
 
         let handle = Arc::new(
             discovery::start(
@@ -240,6 +293,7 @@ impl DiscoveryRuntime {
         let publish_own = own_fingerprint.clone();
         let publish_active = active_transfers;
         let publish_failed = Arc::clone(&failed);
+        let publish_scan = Arc::clone(&scan);
         let publish_task = tokio::spawn(async move {
             let mut visible: HashMap<String, Peer> = HashMap::new();
             let mut interval = tokio::time::interval(SNAPSHOT_INTERVAL);
@@ -268,15 +322,99 @@ impl DiscoveryRuntime {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .clone();
-                publish_snapshot(
+                let shown = publish_snapshot(
                     &publish_handle,
                     &publish_events,
                     &publish_own,
                     &mut visible,
                     &active,
                 );
+                publish_scan.set_visible(shown);
                 if publish_cancel.is_cancelled() {
                     break;
+                }
+            }
+        });
+
+        // The protocol's own fallback for networks that do not carry multicast:
+        // probe every host of the local `/24` over HTTP. It runs when nothing is
+        // visible (so a working LAN pays nothing) and whenever the user
+        // refreshes; a phone that is reachable but whose announcements are lost
+        // is still found and enters the store like any other peer.
+        let scan_handle = Arc::clone(&handle);
+        let scan_cancel = cancel.clone();
+        let scan_state = Arc::clone(&scan);
+        let scan_port = params.device.port;
+        let scan_protocol = params.device.protocol;
+        let scan_task = tokio::spawn(async move {
+            let started = Instant::now();
+            let mut last: Option<Instant> = None;
+            // Grows while scans find nothing, so an empty network is probed
+            // less and less; a manual refresh resets it.
+            let mut interval = SCAN_INTERVAL;
+            loop {
+                tokio::select! {
+                    _ = scan_cancel.cancelled() => break,
+                    _ = tokio::time::sleep(SCAN_TICK) => {}
+                    _ = scan_state.wake.notified() => {}
+                }
+                let now = Instant::now();
+                let manual = scan_state.requested.swap(false, Ordering::Relaxed);
+                let automatic = now.duration_since(started) >= SCAN_FIRST_DELAY
+                    && scan_due(
+                        scan_state.visible.load(Ordering::Relaxed),
+                        last,
+                        now,
+                        interval,
+                    );
+                if !manual && !automatic {
+                    continue;
+                }
+                if manual {
+                    interval = SCAN_INTERVAL;
+                }
+                last = Some(now);
+                let interfaces = local_ipv4_addresses();
+                if interfaces.is_empty() {
+                    continue;
+                }
+                tracing::debug!(
+                    interfaces = ?interfaces,
+                    manual,
+                    "probing the local subnets for devices (the fallback for networks without multicast)"
+                );
+                let mut found_any = false;
+                for address in interfaces {
+                    // A stop or a settings change must not wait for a `/24`
+                    // scan; dropping the future releases its scan guard.
+                    let found = tokio::select! {
+                        _ = scan_cancel.cancelled() => break,
+                        found = scan_handle.scan_subnet(address, scan_port, scan_protocol) => found,
+                    };
+                    match found {
+                        Ok(found) if !found.is_empty() => {
+                            found_any = true;
+                            tracing::info!(
+                                %address,
+                                peers = found.len(),
+                                "the subnet scan found devices multicast did not"
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::debug!(%address, %error, "the subnet scan failed")
+                        }
+                    }
+                }
+                interval = if found_any {
+                    SCAN_INTERVAL
+                } else {
+                    (interval * 2).min(SCAN_MAX_INTERVAL)
+                };
+                if manual && !found_any {
+                    tracing::info!(
+                        "the subnet scan found no device either; both devices must be on the same subnet and allowed to use the local network"
+                    );
                 }
             }
         });
@@ -286,14 +424,18 @@ impl DiscoveryRuntime {
             stop: Some(stop_tx),
             cancel,
             failed,
-            tasks: vec![announce_task, publish_task],
+            tasks: vec![announce_task, publish_task, scan_task],
             refresh,
+            scan,
         }
     }
 
     /// Wake the existing loop; concurrent requests coalesce into one burst.
+    /// A manual refresh also asks the fallback scan to run now, so a peer that
+    /// multicast missed is found even when other peers are shown.
     pub fn refresh(&self) {
         self.refresh.notify_one();
+        self.scan.request();
     }
 
     /// The authoritative discovery store (used to feed registrations back in).
@@ -379,6 +521,28 @@ fn recent_http_channels(devices: &[StatefulDevice], now: SystemTime) -> Vec<Http
         .collect()
 }
 
+/// The IPv4 addresses of this machine's non-loopback interfaces, which the
+/// fallback scan probes (`/24` each).
+///
+/// Use the core's public enumeration API on every platform, including Windows,
+/// so multicast and fallback discovery use the same interface backend.
+fn local_ipv4_addresses() -> Vec<std::net::Ipv4Addr> {
+    let mut addresses =
+        match localsend::util::interface::local_interface_addresses(&Default::default()) {
+            Ok(addresses) => addresses,
+            Err(error) => {
+                tracing::warn!(%error, "could not enumerate interfaces for the fallback scan");
+                return Vec::new();
+            }
+        };
+    addresses.retain(|address| {
+        !address.is_loopback() && !address.is_link_local() && !address.is_unspecified()
+    });
+    addresses.sort_unstable();
+    addresses.dedup();
+    addresses
+}
+
 /// Diffs the discovery store against what the UI currently knows and emits
 /// `PeerFound` for new/changed peers and `PeerLost` for peers that vanished.
 ///
@@ -392,7 +556,7 @@ fn publish_snapshot(
     own_fingerprint: &str,
     visible: &mut HashMap<String, Peer>,
     active_transfers: &HashSet<String>,
-) {
+) -> usize {
     let (next, found, lost) = plan_snapshot(
         visible,
         &discovery.devices(),
@@ -406,7 +570,9 @@ fn publish_snapshot(
     for fingerprint in lost {
         emit(events, TransferEvent::PeerLost(fingerprint));
     }
+    let shown = next.len();
     *visible = next;
+    shown
 }
 
 /// Pure snapshot diff: returns the new visible map plus the peers to announce
@@ -511,6 +677,44 @@ mod tests {
                 channel,
             }],
         }
+    }
+
+    #[test]
+    fn fallback_scan_includes_the_multicast_interfaces() {
+        // Exercise the real platform backend: this also catches a Windows
+        // implementation that silently returns no interfaces.
+        let interfaces = localsend::util::interface::local_interface_addresses(&Default::default())
+            .expect("local interfaces");
+        let scanned = local_ipv4_addresses();
+        for address in interfaces {
+            if !address.is_loopback() && !address.is_link_local() && !address.is_unspecified() {
+                assert!(
+                    scanned.contains(&address),
+                    "missing scan interface {address}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_fallback_scan_waits_for_multicast_to_fail() {
+        let now = Instant::now();
+        assert!(scan_due(0, None, now, SCAN_INTERVAL));
+        assert!(!scan_due(1, None, now, SCAN_INTERVAL));
+        assert!(!scan_due(
+            0,
+            Some(now - SCAN_INTERVAL / 2),
+            now,
+            SCAN_INTERVAL
+        ));
+        assert!(scan_due(0, Some(now - SCAN_INTERVAL), now, SCAN_INTERVAL));
+        // A longer wait, after scans found nothing, holds the next one back.
+        assert!(!scan_due(
+            0,
+            Some(now - SCAN_INTERVAL),
+            now,
+            SCAN_MAX_INTERVAL
+        ));
     }
 
     #[test]

@@ -33,6 +33,7 @@ pub mod menu;
 pub mod notify;
 pub mod quit;
 pub mod status_item;
+pub mod urls;
 pub mod window;
 #[cfg(target_os = "windows")]
 mod windows_close;

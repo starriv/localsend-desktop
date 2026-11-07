@@ -1,6 +1,6 @@
 [package]
 name = "localsend-desktop"
-version = "1.0.5"
+version = "1.0.6"
 edition = "2024"
 rust-version = "1.97"
 publish = false
@@ -96,6 +96,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSNotification",
     "NSObject",
     "NSString",
+    # Finder's file reference URLs (`file:///.file/id=…`) on drop and copy
+    # pasteboards resolve through NSURL (src/platform/urls.rs).
+    "NSURL",
 ] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",

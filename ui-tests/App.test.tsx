@@ -5,6 +5,7 @@
 // repository root, one level above this file (`open("..")`).
 //
 // Screenshots live in `ui-tests/Screenshots.test.tsx` (they need `--target macos`).
+import { platform } from "os";
 import { expect, open, test } from "nsh/test";
 
 // The app follows the system locale on a fresh install; tests pin English so
@@ -43,7 +44,7 @@ test("the settings sheet opens from the rail and closes with Escape", async () =
   // Kept in sync by scripts/bump-version.sh; scripts/check.sh fails when this
   // string and the crate/nsh.json versions disagree, so a version bump cannot
   // leave this test red unnoticed.
-  expect(app.texts()).toContain("Version 1.0.5");
+  expect(app.texts()).toContain("Version 1.0.6");
   expect(app.texts()).toContain("Protocol v2.2");
   await app.keyboard.press("escape");
   expect(app.texts()).not.toContain("Device name");
@@ -74,4 +75,15 @@ test("Escape dismisses the PIN sheet while its input has focus", async () => {
   await app.type("id:pin-input", "1234");
   await app.keyboard.press("escape");
   await app.waitFor("text:Enter PIN", { state: "gone", timeout: 3000 });
+});
+
+// A Finder drag carries `file:` URLs; the send screen stages the dropped file.
+// The fixture is a file every POSIX desktop has (`/etc/hosts`): Windows' URL
+// form is not exercised by the suite yet.
+test("a dropped local file is staged", async () => {
+  if (platform() === "windows") return;
+  const app = await open("..", SIZE);
+  await app.dropFiles("id:send", ["file:///etc/hosts"]);
+  expect(app.texts()).toContain("hosts");
+  expect(app.texts()).not.toContain("Nothing was added");
 });
