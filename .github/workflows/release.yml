@@ -279,7 +279,8 @@ jobs:
 
       - name: Install the pinned Android SDK and NDK
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.1" "ndk;28.0.13004108"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.1" "ndk;28.0.13004108"
           # nsh 0.4 chooses the newest installed build-tools. Expose only
           # the pinned version, rather than whatever the runner image adds.
           sdk="$RUNNER_TEMP/localsend-android-sdk"
