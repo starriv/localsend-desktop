@@ -28,7 +28,9 @@ fn main() -> impl std::process::Termination {
             app_id: "org.localsend.desktop".to_owned(),
             size: WINDOW_SIZE,
             // Closing the window keeps the app (and transfers) running; the
-            // Dock icon reopens it. File > Quit still quits.
+            // Dock icon reopens it. File > Quit still quits. Only `cargo run`
+            // reads this: the `nsh run`/`nsh package` runner does not, which
+            // is why `platform::status_item` also handles the close button.
             #[cfg(target_os = "macos")]
             keep_alive_on_close: true,
             ..Default::default()

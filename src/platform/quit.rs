@@ -1,13 +1,13 @@
 //! Closing the window and quitting.
 //!
-//! nsh 0.4 fixes the close policy at launch: `AppOptions::keep_alive_on_close`
-//! makes macOS hide the window (and keep the engine alive) instead of closing
-//! it, and there is no runtime setter. `main.rs` therefore sets it to `true`
-//! — the app's default — so the window can stay in the background while
-//! transfers run. This module implements the part that *is* dynamic: the
-//! in-app close action (the File > Close Window item, a title-bar button)
-//! honours [`Session`]'s `run_in_background` setting, quitting for real when
-//! it is off.
+//! nsh 0.4 fixes its own close policy at launch (`AppOptions::
+//! keep_alive_on_close`), and the runner that `nsh run`/`nsh package`
+//! generate does not set it — `main.rs` only applies to `cargo run`. On macOS
+//! the window's close button (and ⌘W) is therefore taken over by
+//! [`super::status_item`], which hides the window when `run_in_background` is
+//! on and asks for a quit (through [`quit`]) when it is off. This module
+//! implements the in-app close action (the File > Close Window item), which
+//! honours the same setting.
 //!
 //! Quitting is the risky path: an in-flight transfer would be cut off and the
 //! receiving side left with a `.part` file, so [`quit`] asks for confirmation
@@ -39,8 +39,8 @@ pub fn runs_in_background(session: &Session) -> bool {
 /// Closes the main window, following the "keep running in the background"
 /// setting.
 ///
-/// With it on, the window is hidden (`keep_alive_on_close` in `main.rs` keeps
-/// macOS from terminating); with it off the app quits (with confirmation when
+/// With it on, the window is hidden (on macOS the close request reaches the
+/// delegate hook in [`super::status_item`], which orders it out); with it off the app quits (with confirmation when
 /// a transfer is in progress).
 pub fn close(session: &Session) {
     if runs_in_background(session) {

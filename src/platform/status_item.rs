@@ -411,18 +411,25 @@ mod macos {
     use dispatch2::DispatchQueue;
     use nsh_core::prelude::*;
     use objc2::rc::Retained;
-    use objc2::runtime::{AnyObject, Bool, NSObjectProtocol, ProtocolObject};
+    use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, NSObjectProtocol, ProtocolObject, Sel};
     use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
     use objc2_app_kit::{
         NSApplication, NSApplicationActivationPolicy, NSBezierPath, NSColor, NSImage,
         NSLineCapStyle, NSLineJoinStyle, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar,
-        NSStatusItem, NSVariableStatusItemLength, NSWindowDidChangeOcclusionStateNotification,
+        NSStatusItem, NSVariableStatusItemLength, NSWindow,
+        NSWindowDidChangeOcclusionStateNotification,
     };
     use objc2_foundation::{
         NSNotification, NSNotificationCenter, NSObject, NSPoint, NSRect, NSSize, NSString,
     };
     use std::cell::RefCell;
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// The "keep running in the background" setting, mirrored for the window's
+    /// close button, whose AppKit callback runs on the main thread and must not
+    /// call into nsh. Kept current by an effect in [`install`].
+    static RUN_IN_BACKGROUND: AtomicBool = AtomicBool::new(true);
 
     /// Where menu clicks go (main thread); a session task on the engine
     /// thread receives and performs them.
@@ -528,6 +535,13 @@ mod macos {
             }
         });
 
+        // Settings domain only: progress ticks must not re-run this.
+        let background = session.clone();
+        effect(move || {
+            let on = background.read_settings(|state| state.settings.run_in_background);
+            RUN_IN_BACKGROUND.store(on, Ordering::Relaxed);
+        });
+
         DispatchQueue::main().exec_async(|| {
             if let Some(mtm) = MainThreadMarker::new() {
                 create(mtm);
@@ -600,6 +614,67 @@ mod macos {
         };
         tracing::debug!("installed the menu bar status item");
         TRAY.with(|current| *current.borrow_mut() = Some(tray));
+        take_over_close_button();
+    }
+
+    /// Makes the window's close button (and ⌘W) follow the "keep running in
+    /// the background" setting.
+    ///
+    /// nsh's macOS runner only hides the window on close when
+    /// `AppOptions::keep_alive_on_close` is set, and the runner that
+    /// `nsh run`/`nsh package` generate builds its options itself, without
+    /// it: there, closing the window would end the process — no menu bar
+    /// item, no transfers, and no session flush. nsh 0.4 has no API for this,
+    /// so the `windowShouldClose:` of its window delegate (`NshAppDelegate`,
+    /// named in `nsh-platform-macos`'s `app.rs`) is replaced:
+    ///
+    /// - setting on: the window is ordered out and stays alive (the menu bar
+    ///   item and the Dock reopen it), as `keep_alive_on_close` would do;
+    /// - setting off: the close is refused and a quit is requested instead,
+    ///   so it goes through [`super::super::quit::quit`] (the "transfer in
+    ///   progress" confirmation and [`Session::shutdown`]).
+    ///
+    /// The app's own quit path (`quit_app`) closes the window without asking
+    /// the delegate, so it is not affected.
+    fn take_over_close_button() {
+        let Some(class) = AnyClass::get(c"NshAppDelegate") else {
+            tracing::warn!("nsh's window delegate class is missing: the close button quits");
+            return;
+        };
+        let Some(method) = class.instance_method(sel!(windowShouldClose:)) else {
+            tracing::warn!("nsh's window delegate has no windowShouldClose:");
+            return;
+        };
+        type ShouldClose = unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut NSWindow) -> Bool;
+        let replacement: ShouldClose = window_should_close;
+        // SAFETY: `windowShouldClose:` takes the window and returns `BOOL`;
+        // `ShouldClose` is that signature (`Bool` is `BOOL` on every
+        // architecture), and the replacement accepts every input the original
+        // did (a null window included).
+        unsafe {
+            method.set_implementation(std::mem::transmute::<ShouldClose, Imp>(replacement));
+        }
+        tracing::debug!("the window's close button follows the background setting");
+    }
+
+    /// The window delegate's `windowShouldClose:` (see
+    /// [`take_over_close_button`]). Always answers NO: either the window is
+    /// hidden instead, or the session decides how to quit.
+    unsafe extern "C-unwind" fn window_should_close(
+        _this: *mut AnyObject,
+        _cmd: Sel,
+        window: *mut NSWindow,
+    ) -> Bool {
+        if RUN_IN_BACKGROUND.load(Ordering::Relaxed) {
+            // SAFETY: AppKit passes the window being closed, alive for the
+            // duration of the call.
+            if let Some(window) = unsafe { window.as_ref() } {
+                window.orderOut(None);
+            }
+        } else if let Some(sender) = ACTIONS.get() {
+            let _ = sender.try_send(TrayAction::Quit);
+        }
+        Bool::NO
     }
 
     impl Tray {
