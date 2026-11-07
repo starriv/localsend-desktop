@@ -12,9 +12,8 @@ test -x "$tools/apksigner"
 test -x "$tools/aapt"
 
 version=$(python3 - <<'PY'
-import json, tomllib
-with open("Cargo.toml", "rb") as file:
-    version = tomllib.load(file)["package"]["version"]
+import json, pathlib, re
+version = re.search(r'(?m)^version = "([^"]+)"$', pathlib.Path("Cargo.toml").read_text()).group(1)
 with open("nsh.json") as file:
     manifest = json.load(file)
 assert manifest["version"] == version, "Cargo.toml and nsh.json versions differ"
@@ -57,7 +56,10 @@ python3 - "$out" "$asset" <<'PY'
 import hashlib, pathlib, sys
 folder, name = pathlib.Path(sys.argv[1]), sys.argv[2]
 with (folder / name).open("rb") as file:
-    sha = hashlib.file_digest(file, "sha256").hexdigest()
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: file.read(1024 * 1024), b""):
+        digest.update(chunk)
+    sha = digest.hexdigest()
 (folder / (name + ".sha256")).write_text(f"{sha}  {name}\n")
 PY
 printf '%s\n' "$out/$asset"
