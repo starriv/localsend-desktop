@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "localsend-desktop"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2417,9 +2417,11 @@ dependencies = [
  "mime_guess",
  "nsh-base",
  "nsh-core",
+ "nsh-engine",
  "nsh-platform-linux",
  "nsh-platform-macos",
  "nsh-platform-windows",
+ "nsh-testing",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -2851,6 +2853,19 @@ dependencies = [
  "windows",
  "windows-core",
  "windows-numerics",
+]
+
+[[package]]
+name = "nsh-testing"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa9f8c137cbd4bb5ef50d25c9ce38c88e470713c0b1f2fce6a0283b44a6a457e"
+dependencies = [
+ "crossbeam-channel",
+ "log",
+ "nsh-core",
+ "nsh-engine",
+ "regex",
 ]
 
 [[package]]

@@ -8,7 +8,9 @@
 use crate::i18n::{self, Language};
 use crate::model::state::{HISTORY_LIMIT, HISTORY_SCHEMA, SETTINGS_SCHEMA, default_downloads};
 use crate::model::updater::{UpdateStatus, Updater};
-use crate::model::{AppState, ComposerItem, Settings, Transfer, TransferStatus, View};
+use crate::model::{
+    AppState, ComposerItem, NotificationAccess, Settings, Transfer, TransferStatus, View,
+};
 use crate::net::{self, Handle, Node, NodeConfig, Peer, TransferEvent};
 use crate::ui::theme::Appearance;
 use nsh_core::prelude::*;
@@ -124,6 +126,9 @@ pub struct Session {
     pub pending_restart: Signal<bool>,
     /// What the self-updater is doing (see `model::updater`).
     pub update_status: Signal<UpdateStatus>,
+    /// Whether the system lets LocalSend show notifications (kept current
+    /// by `platform::notify`).
+    pub notification_access: Signal<NotificationAccess>,
     /// The verified update waiting for "Restart to update".
     pub(crate) updater: Rc<RefCell<Updater>>,
     /// Bounded foreground feedback, independent of the background service.
@@ -186,6 +191,7 @@ impl Session {
             settings_open: signal(false),
             pending_restart: signal(false),
             update_status: signal(UpdateStatus::Idle),
+            notification_access: signal(NotificationAccess::Unknown),
             updater: Rc::new(RefCell::new(Updater::default())),
             discovery_feedback: signal(false),
             discovery_feedback_epoch: Rc::new(Cell::new(0)),

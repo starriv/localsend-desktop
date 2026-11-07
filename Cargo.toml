@@ -1,6 +1,6 @@
 [package]
 name = "localsend-desktop"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2024"
 rust-version = "1.97"
 publish = false
@@ -62,6 +62,9 @@ sha2 = "0.11"
 semver = "1"
 
 [dev-dependencies]
+# Rust UI regression fixtures; no live network or JavaScript test runtime.
+nsh-testing = { version = "0.4.0", default-features = false }
+nsh-engine = { version = "0.4.0", default-features = false }
 # The network e2e tests spawn the built CLI with tokio::process.
 tokio = { version = "1", features = ["process"] }
 # Scratch directories for the file system tests (naming, identity, logging).

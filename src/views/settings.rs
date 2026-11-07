@@ -9,9 +9,9 @@
 //! scrim): this module returns only the inner content.
 
 use crate::i18n::Language;
-use crate::model::Session;
 use crate::model::UpdateStatus;
 use crate::model::updater::{failure_key, manual_key};
+use crate::model::{NotificationAccess, Session};
 use crate::net::DeviceType;
 use crate::ui::{
     Appearance, ButtonKind, IconName, button, colors, control, radius, segmented, space, text_size,
@@ -336,7 +336,57 @@ fn receiving_section(session: Session) -> impl IntoElement {
                 pin_field(&session),
                 Some(applies_after_transfer(&session)),
             ),
-        ],
+        ]
+        .into_iter()
+        .chain(crate::platform::notify::available().then(|| notifications_row(&session)))
+        .collect(),
+    )
+}
+
+/// The notification row: whether the system lets LocalSend alert, and the
+/// way to its page in System Settings. macOS never asks again once someone
+/// declines, so this is the only way back.
+fn notifications_row(session: &Session) -> AnyElement {
+    notifications_row_with(session, crate::platform::notify::open_system_settings)
+}
+
+fn notifications_row_with(
+    session: &Session,
+    open_settings: impl Fn() + Clone + 'static,
+) -> AnyElement {
+    let access = session.notification_access;
+    let denied = computed(move || access.get() == NotificationAccess::Denied);
+    let note = when(move || denied.get(), {
+        let session = session.clone();
+        move || {
+            text(session.text("settings.notifications_off"))
+                .text_size(px(text_size::CAPTION))
+                .text_color(colors::WARNING)
+                .number_of_lines(2)
+        }
+    })
+    .into_element();
+    let open = |kind: ButtonKind| {
+        button(session.text("settings.notifications_open"))
+            .kind(kind)
+            .small()
+            .on_press(open_settings.clone())
+    };
+    let action = view()
+        .child(when(move || denied.get(), {
+            let button = open(ButtonKind::Secondary);
+            move || button.clone()
+        }))
+        .child(when(move || !denied.get(), {
+            let button = open(ButtonKind::Ghost);
+            move || button.clone()
+        }))
+        .into_element();
+    row(
+        session.text("settings.notifications"),
+        session.text("settings.notifications_hint"),
+        action,
+        Some(note),
     )
 }
 
@@ -683,4 +733,60 @@ fn row(
         )
         .child(control)
         .into_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nsh_engine::{EngineConfig, Root};
+    use nsh_testing::Headless;
+
+    /// Drives the real notification row, replacing only the OS launcher.
+    /// The two fixture buttons stand in for results returned by macOS.
+    #[component]
+    fn PermissionFixture() -> impl IntoElement {
+        let session = Session::new();
+        session.language.set(Language::En);
+        let access = session.notification_access;
+        let opened = signal(0_u32);
+        view()
+            .flex_col()
+            .child(notifications_row_with(&session, move || {
+                opened.update(|count| *count += 1)
+            }))
+            .child(
+                button("Deny notification access")
+                    .on_press(move || access.set(NotificationAccess::Denied)),
+            )
+            .child(
+                button("Allow notification access")
+                    .on_press(move || access.set(NotificationAccess::Allowed)),
+            )
+            .child(text(move || {
+                format!("System settings requests: {}", opened.get())
+            }))
+    }
+
+    #[test]
+    fn notification_warning_tracks_permission_changes_and_settings_action() {
+        let mut app = Headless::start(EngineConfig::new(Root::of::<PermissionFixture>())).unwrap();
+        let warning =
+            "Turned off in System Settings, so incoming requests and files don't alert you";
+        app.wait_for("Open System Settings").unwrap();
+        assert!(!app.shows(warning));
+        app.press("label:Deny notification access").unwrap();
+        app.wait_for(warning).unwrap();
+        app.press("label:Open System Settings").unwrap();
+        app.wait_for("System settings requests: 1").unwrap();
+        app.press("label:Allow notification access").unwrap();
+        app.wait_for_gone(warning, std::time::Duration::from_secs(3))
+            .unwrap();
+        // The action remains available in the allowed state, and a later
+        // system-side revocation must bring the warning back.
+        app.wait_for("Open System Settings").unwrap();
+        app.press("label:Open System Settings").unwrap();
+        app.wait_for("System settings requests: 2").unwrap();
+        app.press("label:Deny notification access").unwrap();
+        app.wait_for(warning).unwrap();
+    }
 }

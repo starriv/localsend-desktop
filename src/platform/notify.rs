@@ -22,11 +22,53 @@
 //! (on the main thread, like [`super::status_item`]). That needs a real app
 //! bundle: `cargo run` / `nsh run` binaries post nothing. Other platforms:
 //! [`install`] does nothing yet.
+//!
+//! macOS asks for permission once. Someone who declines (or turns LocalSend
+//! off later) is never asked again, so [`install`] keeps
+//! [`Session::notification_access`] current — at launch, when the settings
+//! sheet opens and whenever LocalSend becomes the active app (coming back
+//! from System Settings) — and the settings sheet offers
+//! [`open_system_settings`].
 
 use crate::i18n::{self, Language, fill};
 use crate::model::{AppState, IncomingRequest, Session, Transfer, TransferStatus, View};
 use crate::net::Direction;
 use std::collections::HashSet;
+
+/// Routes permission results to the current session, including after a root
+/// remount. Replacing the sender disconnects the previous session's task.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Default)]
+struct AccessRelay(
+    std::sync::Mutex<Option<async_channel::Sender<crate::model::NotificationAccess>>>,
+);
+
+#[cfg(any(target_os = "macos", test))]
+impl AccessRelay {
+    const fn new() -> Self {
+        Self(std::sync::Mutex::new(None))
+    }
+
+    fn subscribe(&self) -> async_channel::Receiver<crate::model::NotificationAccess> {
+        let (sender, receiver) = async_channel::unbounded();
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sender);
+        receiver
+    }
+
+    fn publish(&self, access: crate::model::NotificationAccess) {
+        if let Some(sender) = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            let _ = sender.try_send(access);
+        }
+    }
+}
 
 /// The identifier of the request notification (one at a time).
 const REQUEST_ID: &str = "localsend.request";
@@ -41,6 +83,13 @@ const MESSAGE_CHARS: usize = 240;
 /// Whether this build can show system notifications.
 pub const fn available() -> bool {
     cfg!(target_os = "macos")
+}
+
+/// Opens LocalSend's page in the system's notification settings (macOS);
+/// does nothing elsewhere.
+pub fn open_system_settings() {
+    #[cfg(target_os = "macos")]
+    macos::open_system_settings();
 }
 
 /// A notification to post.
@@ -229,8 +278,8 @@ mod macos {
     //! `UNUserNotificationCenter`, through the Objective-C runtime (the app
     //! has no typed binding for the UserNotifications framework).
 
-    use super::{Change, Planner, destination};
-    use crate::model::Session;
+    use super::{AccessRelay, Change, Planner, destination};
+    use crate::model::{NotificationAccess, Session};
     use crate::platform::status_item::{self, TrayAction};
     use block2::{Block, RcBlock};
     use dispatch2::DispatchQueue;
@@ -256,6 +305,14 @@ mod macos {
     /// The notification center can be used (set on the main thread once the
     /// app bundle was checked).
     static ENABLED: AtomicBool = AtomicBool::new(false);
+
+    /// Where the permission checks go (any thread); a session task on the
+    /// engine thread puts them into [`Session::notification_access`].
+    static ACCESS: AccessRelay = AccessRelay::new();
+
+    /// LocalSend's bundle identifier when the main bundle has none (the
+    /// packaged app's, from `nsh.json`).
+    const BUNDLE_ID: &str = "org.localsend.desktop";
 
     define_class!(
         /// Decides whether a notification shows while LocalSend is the active
@@ -300,9 +357,26 @@ mod macos {
         if !is_desktop() || std::env::var_os("LOCALSEND_OFFLINE").is_some() {
             return;
         }
+        let receiver = ACCESS.subscribe();
+        let access = session.notification_access;
+        session.task_detached(async move {
+            while let Ok(value) = receiver.recv().await {
+                if access.get_untracked() != value {
+                    access.set(value);
+                }
+            }
+        });
         DispatchQueue::main().exec_async(|| {
             if MainThreadMarker::new().is_some() {
                 set_up();
+            }
+        });
+        // Opening the settings sheet checks again: the row there must not
+        // show a stale state.
+        let settings_open = session.settings_open;
+        effect(move || {
+            if settings_open.get() {
+                DispatchQueue::main().exec_async(refresh);
             }
         });
         let planner = RefCell::new(Planner::default());
@@ -319,6 +393,12 @@ mod macos {
     /// Main thread: checks that this process is an app bundle (the center
     /// throws otherwise), installs the delegate and asks for permission.
     fn set_up() {
+        // The center and observer live for the process; a new session only
+        // needs a fresh permission result, not another delegate or observer.
+        if ENABLED.load(Ordering::Acquire) {
+            refresh();
+            return;
+        }
         if !in_app_bundle() {
             tracing::info!("Not running from an app bundle: no system notifications");
             return;
@@ -332,10 +412,15 @@ mod macos {
         // The center holds its delegate weakly; this one lives as long as the
         // process.
         std::mem::forget(delegate);
+        // Publish readiness before requesting authorization: its completion
+        // may run immediately on another thread when already decided.
+        ENABLED.store(true, Ordering::Release);
+        observe_activation();
         let done = RcBlock::new(|granted: Bool, error: *mut AnyObject| {
             // SAFETY: the handler's error is an `NSError` or nil.
             let reason = unsafe { error.as_ref() }.map(describe).unwrap_or_default();
             tracing::info!(granted = granted.as_bool(), %reason, "Notification permission");
+            refresh();
         });
         let _: () = unsafe {
             msg_send![
@@ -344,7 +429,103 @@ mod macos {
                 completionHandler: &*done
             ]
         };
-        ENABLED.store(true, Ordering::Relaxed);
+        refresh();
+    }
+
+    /// Main thread: checks the permission again whenever LocalSend becomes
+    /// the active app — the way back from System Settings.
+    fn observe_activation() {
+        let Some(class) = AnyClass::get(c"NSNotificationCenter") else {
+            return;
+        };
+        let name = NSString::from_str("NSApplicationDidBecomeActiveNotification");
+        let block = RcBlock::new(|_notification: *mut AnyObject| refresh());
+        unsafe {
+            let center: Retained<AnyObject> = msg_send![class, defaultCenter];
+            let token: Option<Retained<AnyObject>> = msg_send![
+                &center,
+                addObserverForName: &*name,
+                object: None::<&AnyObject>,
+                queue: None::<&AnyObject>,
+                usingBlock: &*block
+            ];
+            // Observes for the life of the process.
+            std::mem::forget(token);
+        }
+    }
+
+    /// Any thread: reads the current permission and reports it to the
+    /// session ([`ACCESS`]).
+    fn refresh() {
+        if !ENABLED.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(center) = center() else { return };
+        let done = RcBlock::new(|settings: *mut AnyObject| {
+            // SAFETY: the handler's argument is a `UNNotificationSettings`.
+            let Some(settings) = (unsafe { settings.as_ref() }) else {
+                return;
+            };
+            let status: isize = unsafe { msg_send![settings, authorizationStatus] };
+            let access = access_for(status);
+            ACCESS.publish(access);
+        });
+        let _: () =
+            unsafe { msg_send![&center, getNotificationSettingsWithCompletionHandler: &*done] };
+    }
+
+    /// `UNAuthorizationStatus`: 0 not determined, 1 denied, 2 authorized,
+    /// 3 provisional, 4 ephemeral.
+    pub(super) fn access_for(status: isize) -> NotificationAccess {
+        match status {
+            1 => NotificationAccess::Denied,
+            2..=4 => NotificationAccess::Allowed,
+            _ => NotificationAccess::Unknown,
+        }
+    }
+
+    /// Opens `x-apple.systempreferences:…Notifications-Settings…?id=<bundle>`.
+    pub fn open_system_settings() {
+        let id = bundle_id().unwrap_or_else(|| BUNDLE_ID.to_owned());
+        let url = system_settings_url(&id);
+        // Wait and reap off the engine thread. A successful spawn alone
+        // does not mean Launch Services accepted the URL.
+        if let Err(error) = std::thread::Builder::new()
+            .name("notification-settings".to_owned())
+            .spawn(move || {
+                let result = run_opener(std::process::Command::new("/usr/bin/open").arg(url));
+                if let Err(error) = result {
+                    tracing::warn!(%error, "Cannot open the notification settings");
+                }
+            })
+        {
+            tracing::warn!(%error, "Cannot open the notification settings");
+        }
+    }
+
+    pub(super) fn system_settings_url(id: &str) -> String {
+        format!("x-apple.systempreferences:com.apple.Notifications-Settings.extension?id={id}")
+    }
+
+    pub(super) fn run_opener(command: &mut std::process::Command) -> anyhow::Result<()> {
+        let output = command.output()?;
+        anyhow::ensure!(
+            output.status.success(),
+            "System Settings opener exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        Ok(())
+    }
+
+    /// The main bundle's identifier.
+    fn bundle_id() -> Option<String> {
+        let class = AnyClass::get(c"NSBundle")?;
+        unsafe {
+            let bundle: Option<Retained<AnyObject>> = msg_send![class, mainBundle];
+            let id: Option<Retained<NSString>> = msg_send![&bundle?, bundleIdentifier];
+            id.map(|id| id.to_string())
+        }
     }
 
     /// Main thread: posts and withdraws notifications.
@@ -725,6 +906,52 @@ mod tests {
         assert_eq!(cut.chars().count(), MESSAGE_CHARS);
         assert!(cut.ends_with('…'));
         assert_eq!(excerpt(" short "), "short");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_system_permission_maps_to_access() {
+        use crate::model::NotificationAccess;
+        assert_eq!(macos::access_for(0), NotificationAccess::Unknown);
+        assert_eq!(macos::access_for(1), NotificationAccess::Denied);
+        for allowed in 2..=4 {
+            assert_eq!(macos::access_for(allowed), NotificationAccess::Allowed);
+        }
+        assert_eq!(macos::access_for(9), NotificationAccess::Unknown);
+    }
+
+    #[test]
+    fn permission_results_follow_the_current_session() {
+        use crate::model::NotificationAccess::{Allowed, Denied};
+        let relay = AccessRelay::new();
+        let first = relay.subscribe();
+        relay.publish(Denied);
+        assert_eq!(first.try_recv().unwrap(), Denied);
+        let second = relay.subscribe();
+        assert!(first.is_closed());
+        relay.publish(Allowed);
+        assert_eq!(second.try_recv().unwrap(), Allowed);
+        assert!(first.try_recv().is_err());
+        drop(second);
+        // Late platform callbacks after teardown must be harmless, and a
+        // subsequent mount must still be able to subscribe.
+        relay.publish(Denied);
+        let third = relay.subscribe();
+        relay.publish(Denied);
+        assert_eq!(third.try_recv().unwrap(), Denied);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn settings_opener_targets_the_app_and_reports_failed_exit() {
+        use std::process::Command;
+        assert_eq!(
+            macos::system_settings_url("org.localsend.desktop"),
+            "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=org.localsend.desktop"
+        );
+        macos::run_opener(&mut Command::new("/usr/bin/true")).unwrap();
+        assert!(macos::run_opener(&mut Command::new("/usr/bin/false")).is_err());
+        assert!(macos::run_opener(&mut Command::new("/missing/notification-opener")).is_err());
     }
 
     #[test]
