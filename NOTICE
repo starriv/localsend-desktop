@@ -8,6 +8,16 @@ redistributes in source form:
   Apache License 2.0 text). No changes were made to it. The packaged `.app`
   bundles these license texts under `Contents/Resources/`.
 
+- LocalSend visual identity reference, Apache-2.0,
+  https://github.com/localsend/localsend/tree/main/app/assets/img
+  The icon in `design/AppIcon.icon` and the runtime mark in `src/ui/icons.rs`
+  are a new vector reinterpretation of LocalSend's central node and segmented
+  orbit motif, rather than copies of the upstream PNGs. `assets/icon.png`
+  is rendered from these layers by Apple's Icon Composer for platforms
+  without native layered icon support. The reference license is retained as
+  `assets/LocalSend_LICENSE.txt`, bundled as LICENSE-LocalSend-logo on macOS
+  and among the NSH assets on every platform.
+
 - Material Icons font (Material Icons, Copyright 2019 Google LLC),
   CC BY 4.0, https://creativecommons.org/licenses/by/4.0/
   `assets/MaterialIcons-Regular.otf`, taken unmodified from the Flutter SDK's

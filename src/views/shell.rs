@@ -159,7 +159,7 @@ fn sidebar_title(session: Session) -> impl IntoElement {
         .pl(move || title_bar().left + px(space::SM))
         .pr(px(space::MD))
         .window_drag(true)
-        .child(icon(IconName::Send).size(15.0).color(colors::MARK))
+        .child(icon(IconName::LocalSend).size(19.0).color(colors::MARK))
         .child(
             text(move || session.text("app.name"))
                 .role(AccessibilityRole::Header)

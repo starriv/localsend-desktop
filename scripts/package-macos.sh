@@ -156,17 +156,30 @@ plist_set_string NSHumanReadableCopyright \
 echo "== licenses"
 resources="$staged/Contents/Resources"
 mkdir -p "$resources"
+echo "== layered app icon"
+# Icon Composer's vector layers provide native appearances on recent macOS;
+# actool also emits an .icns fallback for the minimum supported macOS 14.
+icon_build="$stage/icon"
+mkdir -p "$icon_build"
+xcrun actool design/AppIcon.icon --compile "$icon_build" \
+    --platform macosx --minimum-deployment-target 14.0 --app-icon AppIcon \
+    --output-partial-info-plist "$icon_build/icon.plist"
+cp "$icon_build/AppIcon.icns" "$resources/AppIcon.icns"
+cp "$icon_build/Assets.car" "$resources/Assets.car"
+plist_set_string CFBundleIconName AppIcon
+plist_set_string CFBundleIconFile AppIcon
 cp LICENSE "$resources/LICENSE"
 cp NOTICE "$resources/NOTICE"
 # The core's Apache-2.0 text, kept separate from the app's MIT license.
 cp vendor/localsend/LICENSE "$resources/LICENSE-LocalSend-core"
+cp assets/LocalSend_LICENSE.txt "$resources/LICENSE-LocalSend-logo"
 # The bundled Material Icons font's CC BY 4.0 license and attribution (see
 # NOTICE; the font arrives with that license from the Flutter SDK).
 cp assets/MaterialIcons_LICENSE.txt "$resources/LICENSE-MaterialIcons"
 # Readable by every user of the machine, like any other bundled resource.
 chmod 0644 "$resources/LICENSE" "$resources/NOTICE" "$resources/LICENSE-LocalSend-core" \
-    "$resources/LICENSE-MaterialIcons"
-for file in LICENSE NOTICE LICENSE-LocalSend-core LICENSE-MaterialIcons; do
+    "$resources/LICENSE-LocalSend-logo" "$resources/LICENSE-MaterialIcons"
+for file in LICENSE NOTICE LICENSE-LocalSend-core LICENSE-LocalSend-logo LICENSE-MaterialIcons; do
     [ -f "$resources/$file" ] || die "missing bundled license: $resources/$file"
 done
 

@@ -22,7 +22,9 @@ use nsh_core::prelude::*;
 /// caps and joins, 2 pt padding from the box edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum IconName {
-    /// The app mark and the send destination: a paper plane.
+    /// LocalSend-inspired identity: four orbit segments and a local node.
+    LocalSend,
+    /// The send destination and action: a paper plane.
     #[default]
     Send,
     /// An arrow landing in a tray: receive.
@@ -272,6 +274,23 @@ impl IconName {
     /// Draws the glyph in a 20 × 20 box with any [`Pen`].
     pub fn draw<P: Pen>(self, painter: P) -> P {
         match self {
+            IconName::LocalSend => {
+                let mut p = dot(painter, 10.0, 10.0, 3.2);
+                for quarter in 0..4 {
+                    let offset = quarter as f32 * PI / 2.0;
+                    p = p
+                        .begin()
+                        .arc(
+                            10.0,
+                            10.0,
+                            7.0,
+                            offset + 14.0_f32.to_radians(),
+                            offset + 76.0_f32.to_radians(),
+                        )
+                        .stroke();
+                }
+                p
+            }
             IconName::Send => {
                 let p = poly(painter, &[17.2, 3.4, 3.2, 9.2, 9.0, 11.4, 16.8, 4.2]);
                 poly(p, &[11.4, 17.0, 9.0, 11.4, 3.2, 9.2])

@@ -71,7 +71,7 @@ impl TrayIcon {
             TrayIcon::Receiving => IconName::ArrowDown,
             TrayIcon::Recent => IconName::History,
             TrayIcon::Cancelled => IconName::Cancel,
-            TrayIcon::Open => IconName::Send,
+            TrayIcon::Open => IconName::LocalSend,
         }
     }
 }
@@ -611,8 +611,9 @@ mod macos {
         menu.setAutoenablesItems(false);
         item.setMenu(Some(&menu));
         if let Some(button) = item.button(mtm) {
-            // The app mark, as the sidebar draws it; 18 pt fits the menu bar.
-            button.setImage(Some(&glyph_image(IconName::Send, 18.0)));
+            // Render the identity as vectors at each backing scale; AppKit
+            // adapts the template tint to light/dark menu bars.
+            button.setImage(Some(&glyph_image(IconName::LocalSend, 18.0)));
             button.setToolTip(Some(&NSString::from_str("LocalSend")));
         }
         // Hiding the window (closing it keeps the app alive) leaves the Dock;

@@ -2,8 +2,8 @@
 //! Linux, whose shortcuts also work while the title bar is hidden).
 //!
 //! On macOS the first submenu is the app menu (AppKit titles it with the app's
-//! name): About, Settings…, Hide/Hide Others/Show All, Quit. The other menus
-//! are the same on every desktop: File, Edit, View, Window, Help.
+//! name): About, Settings…, Check for updates, Hide/Hide Others/Show All, Quit.
+//! The other menus are the same on every desktop: File, Edit, View, Window, Help.
 //!
 //! Items are rebuilt when the language, the destination or whether a send can
 //! start changes — not on every transfer-progress tick — and their handlers
@@ -72,8 +72,8 @@ fn menus_at(session: &Session, language: Language, view: View, can_send: bool) -
     menus
 }
 
-/// The app menu: About, Settings…, Hide/Show and Quit (macOS only; the
-/// platform leaves About/Hide out elsewhere).
+/// The app menu: About, Settings…, Check for updates, Hide/Show and Quit
+/// (macOS only; the platform leaves About/Hide out elsewhere).
 fn app_menu(session: &Session, language: Language) -> MenuItem {
     let settings = session.clone();
     let quit_app = session.clone();
@@ -85,6 +85,7 @@ fn app_menu(session: &Session, language: Language) -> MenuItem {
             MenuItem::new(text(language, "menu.settings"))
                 .shortcut("mod+,")
                 .on_select(move || settings.open_settings(true)),
+            check_for_updates_item(session, language),
             MenuItem::separator(),
             MenuItem::role(MenuRole::Hide).label(text(language, "menu.hide")),
             MenuItem::role(MenuRole::HideOthers).label(text(language, "menu.hide_others")),
@@ -126,13 +127,14 @@ fn file_menu(session: &Session, language: Language, mac: bool, can_send: bool) -
             .on_select(move || quit::close(&close)),
     ];
     if !mac {
-        // No app menu: Settings and Quit live in File, as on Windows and Linux.
+        // No app menu: Settings, updates and Quit live in File on Windows/Linux.
         items.push(MenuItem::separator());
         items.push(
             MenuItem::new(text(language, "menu.settings"))
                 .shortcut("mod+,")
                 .on_select(move || settings.open_settings(true)),
         );
+        items.push(check_for_updates_item(session, language));
         // Custom, like the macOS app menu's Quit: confirm + flush first.
         items.push(
             MenuItem::new(text(language, "menu.quit"))
@@ -141,6 +143,16 @@ fn file_menu(session: &Session, language: Language, mac: bool, can_send: bool) -
         );
     }
     MenuItem::submenu(text(language, "menu.file"), items)
+}
+
+/// Show the existing update UI and start the same manual check as its button.
+fn check_for_updates_item(session: &Session, language: Language) -> MenuItem {
+    let session = session.clone();
+    MenuItem::new(text(language, "update.check")).on_select(move || {
+        order_front();
+        session.open_settings(true);
+        session.check_for_updates(true);
+    })
 }
 
 /// The Edit menu: the platform's text-editing items, with localized labels.
