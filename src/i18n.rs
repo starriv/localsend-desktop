@@ -263,11 +263,11 @@ const EN: &[(&str, &str)] = &[
     ("update.downloading_button", "Downloading…"),
     (
         "update.ready",
-        "Version {version} is downloaded and verified",
+        "Version {version} is ready: it installs when you restart or quit LocalSend",
     ),
     (
         "update.ready_toast",
-        "LocalSend {version} is ready: restart to update",
+        "LocalSend {version} is ready: it installs when you restart or quit",
     ),
     ("update.restart", "Restart to update"),
     ("update.installing", "Installing the update…"),
@@ -353,12 +353,12 @@ const EN: &[(&str, &str)] = &[
     ("menu.website", "LocalSend Website"),
     ("menu.source", "LocalSend on GitHub"),
     // Notifications
-    ("notify.incoming_title", "Incoming transfer"),
-    ("notify.incoming_body", "{name} wants to send you files"),
-    ("notify.finished_title", "Transfer complete"),
-    ("notify.finished_body", "The transfer with {name} finished"),
-    ("notify.failed_title", "Transfer failed"),
-    ("notify.failed_body", "The transfer with {name} failed"),
+    // System notifications: the sender's name is the title.
+    ("notify.request_file", "Wants to send you {file}"),
+    ("notify.request_files", "Wants to send you {count} files"),
+    ("notify.request_message", "Sent you a message: {text}"),
+    ("notify.received_file", "Sent you {file}"),
+    ("notify.received_files", "Sent you {count} files"),
     // Toasts
     (
         "toast.settings_deferred",
@@ -588,10 +588,13 @@ const ZH: &[(&str, &str)] = &[
     ("update.up_to_date", "LocalSend 已是最新版本"),
     ("update.downloading", "正在下载 {version}… {percent}%"),
     ("update.downloading_button", "下载中…"),
-    ("update.ready", "{version} 已下载并通过校验"),
+    (
+        "update.ready",
+        "{version} 已就绪，重启或退出 LocalSend 时自动安装",
+    ),
     (
         "update.ready_toast",
-        "LocalSend {version} 已就绪，重启即可更新",
+        "LocalSend {version} 已就绪，重启或退出时自动安装",
     ),
     ("update.restart", "重启以更新"),
     ("update.installing", "正在安装更新…"),
@@ -656,12 +659,12 @@ const ZH: &[(&str, &str)] = &[
     ("menu.website", "LocalSend 网站"),
     ("menu.source", "GitHub 上的 LocalSend"),
     // Notifications
-    ("notify.incoming_title", "收到传输请求"),
-    ("notify.incoming_body", "{name} 想向你发送文件"),
-    ("notify.finished_title", "传输完成"),
-    ("notify.finished_body", "与 {name} 的传输已完成"),
-    ("notify.failed_title", "传输失败"),
-    ("notify.failed_body", "与 {name} 的传输失败"),
+    // 系统通知：标题是发送方的名称。
+    ("notify.request_file", "想给你发送「{file}」"),
+    ("notify.request_files", "想给你发送 {count} 个文件"),
+    ("notify.request_message", "发来一条消息：{text}"),
+    ("notify.received_file", "发来了「{file}」"),
+    ("notify.received_files", "发来了 {count} 个文件"),
     // Toasts
     ("toast.settings_deferred", "设置将在当前传输结束后生效"),
     // Menu bar (status item) menu

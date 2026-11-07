@@ -4,8 +4,11 @@
 //! With [`Settings::auto_update`](crate::model::Settings::auto_update) on, the
 //! session checks [`FIRST_CHECK_DELAY`] after launch and then every
 //! [`CHECK_INTERVAL`]; a newer release is downloaded and verified right away,
-//! and the user is told it is ready. Installing always waits for the user
-//! ("Restart to update"), and never interrupts a transfer. The network work
+//! and the user is told it is ready. Installing always waits for the user:
+//! "Restart to update" installs and relaunches (never interrupting a
+//! transfer), and quitting the app any other way installs it without the
+//! relaunch ([`Session::install_on_quit`]). A download finished by an earlier
+//! launch is reused rather than fetched again (`update::download`). The network work
 //! runs on the tokio runtime ([`tokio::spawn`]), so hashing a 20 MB download
 //! never stalls a frame; the engine thread only polls the byte counter.
 
@@ -245,7 +248,7 @@ impl Session {
         let Some(prepared) = self.updater.borrow().prepared.clone() else {
             return false;
         };
-        match install::launch(&prepared) {
+        match install::launch(&prepared, true) {
             Ok(()) => {
                 tracing::info!(target = %prepared.target.path.display(), "Installing the update");
                 self.update_status.set(UpdateStatus::Installing);
@@ -256,6 +259,36 @@ impl Session {
                 self.update_failed(error, true);
                 false
             }
+        }
+    }
+}
+
+impl Session {
+    /// Installs a downloaded, verified update as the app quits, without
+    /// starting it again: the user who quits instead of pressing "Restart to
+    /// update" finds the new version on the next launch. Called on every
+    /// in-app quit path (`platform::quit`), after the user confirmed
+    /// interrupting any transfer. Does nothing unless an update is ready (so
+    /// "Restart to update", which already started the installer, is not
+    /// installed twice).
+    pub fn install_on_quit(&self) {
+        if !matches!(
+            self.update_status.get_untracked(),
+            UpdateStatus::Ready { .. }
+        ) {
+            return;
+        }
+        let Some(prepared) = self.updater.borrow_mut().prepared.take() else {
+            return;
+        };
+        match install::launch(&prepared, false) {
+            Ok(()) => {
+                tracing::info!(target = %prepared.target.path.display(), "Installing the update on quit");
+                self.update_status.set(UpdateStatus::Installing);
+            }
+            // The app is quitting either way; the next launch finds the
+            // download again and offers it.
+            Err(error) => tracing::warn!(%error, "Cannot install the update on quit"),
         }
     }
 }

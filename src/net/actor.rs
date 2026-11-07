@@ -1148,6 +1148,7 @@ impl Actor {
         let peer = server::peer_from_prepare_upload(&ip, &info, cert_fingerprint.as_deref());
         let incoming = Incoming::new(session_id.clone(), peer, files, decision_tx);
         let files = incoming.offered();
+        let message = incoming.message().map(receive::clamp_text);
         emit(
             &self.events,
             TransferEvent::IncomingRequest {
@@ -1155,6 +1156,7 @@ impl Actor {
                 peer: incoming.peer.clone(),
                 files,
                 total,
+                message,
             },
         );
         // The decision is always answered by the app: `Handle::decide` is

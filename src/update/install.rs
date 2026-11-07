@@ -4,10 +4,15 @@
 //!   next to the download with `ditto`, its bundle id, version and code
 //!   signature are checked, and a small shell script (started detached, see
 //!   [`launch`]) waits for this process to exit, swaps the bundles (keeping
-//!   the old one until the new one is in place) and opens the new one.
+//!   the old one until the new one is in place) and, when asked to, opens the
+//!   new one.
 //! - **Windows**: the update is the NSIS installer. It is started with `/S`
 //!   (silent) and `/UPDATE`; the installer waits for `LocalSend.exe` to
-//!   exit, installs over the same folder and starts the app again.
+//!   exit, installs over the same folder and starts the app again, unless
+//!   `/NORUN` is also passed.
+//!
+//! [`launch`] either relaunches ("Restart to update") or not (the update is
+//! installed as the user quits the app).
 //!
 //! [`target`] decides first whether this copy can update itself at all: a
 //! development build, a portable Windows copy, a translocated or read-only
@@ -232,11 +237,13 @@ fn run(command: &mut std::process::Command) -> anyhow::Result<()> {
 }
 
 /// The macOS swap script. Arguments: the pid to wait for, the new bundle, the
-/// installed bundle, the log file. It never replaces a running app: if the
-/// process is still alive after a minute it gives up.
+/// installed bundle, the log file, and `1` to open the app afterwards (`0`
+/// when the user quit it). It never replaces a running app: if the process is
+/// still alive after a minute it gives up.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const SWAP_SCRIPT: &str = r#"#!/bin/sh
-pid="$1"; new="$2"; target="$3"; log="$4"
+pid="$1"; new="$2"; target="$3"; log="$4"; relaunch="$5"
+reopen() { [ "$relaunch" = 1 ] && open "$target"; }
 exec >>"$log" 2>&1
 echo "$(date): waiting for $pid"
 i=0
@@ -249,7 +256,7 @@ backup="$target.update-backup"
 rm -rf "$backup"
 if ! mv "$target" "$backup"; then
   echo "cannot move the installed app aside"
-  open "$target"
+  reopen
   exit 1
 fi
 if mv "$new" "$target"; then
@@ -260,17 +267,19 @@ else
   rm -rf "$target"
   mv "$backup" "$target"
 fi
-open "$target"
+reopen
+exit 0
 "#;
 
 /// Starts the detached process that installs `prepared` once this process
-/// has exited. The caller quits right after it returns `Ok`.
-pub fn launch(prepared: &Prepared) -> Result<()> {
-    platform_launch(prepared).map_err(Error::install)
+/// has exited, and with `relaunch` starts the updated app afterwards. The
+/// caller quits right after it returns `Ok`.
+pub fn launch(prepared: &Prepared, relaunch: bool) -> Result<()> {
+    platform_launch(prepared, relaunch).map_err(Error::install)
 }
 
 #[cfg(target_os = "macos")]
-fn platform_launch(prepared: &Prepared) -> anyhow::Result<()> {
+fn platform_launch(prepared: &Prepared, relaunch: bool) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
@@ -287,6 +296,7 @@ fn platform_launch(prepared: &Prepared) -> anyhow::Result<()> {
         .arg(&prepared.payload)
         .arg(&prepared.target.path)
         .arg(dir.join("update.log"))
+        .arg(if relaunch { "1" } else { "0" })
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -298,13 +308,18 @@ fn platform_launch(prepared: &Prepared) -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn platform_launch(prepared: &Prepared) -> anyhow::Result<()> {
+fn platform_launch(prepared: &Prepared, relaunch: bool) -> anyhow::Result<()> {
     use std::os::windows::process::CommandExt;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
-    std::process::Command::new(&prepared.payload)
-        .args(["/S", "/UPDATE"])
+    let mut command = std::process::Command::new(&prepared.payload);
+    command.args(["/S", "/UPDATE"]);
+    if !relaunch {
+        // Installers older than this flag ignore it and start the app.
+        command.arg("/NORUN");
+    }
+    command
         .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
         .spawn()
         .context("cannot start the installer")?;
@@ -312,7 +327,7 @@ fn platform_launch(prepared: &Prepared) -> anyhow::Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn platform_launch(_prepared: &Prepared) -> anyhow::Result<()> {
+fn platform_launch(_prepared: &Prepared, _relaunch: bool) -> anyhow::Result<()> {
     Err(anyhow::anyhow!("self-update is not supported here"))
 }
 
@@ -348,6 +363,8 @@ mod tests {
     fn the_swap_script_replaces_the_bundle() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("swap.sh");
+        // Never open anything from a test: relaunch is `0` below, and `open`
+        // is stubbed out as well.
         std::fs::write(&script, SWAP_SCRIPT.replace("open \"$target\"", ":")).unwrap();
         let target = dir.path().join("App.app");
         let new = dir.path().join("new/App.app");
@@ -364,6 +381,7 @@ mod tests {
                 .arg(new)
                 .arg(&target)
                 .arg(&log)
+                .arg("0")
                 .status()
                 .unwrap()
         };

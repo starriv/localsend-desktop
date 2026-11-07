@@ -1321,6 +1321,7 @@ impl Session {
                     })
                     .collect(),
                 total: 43_400_000,
+                message: None,
             });
         } else if mode == "pin" {
             let id = "demo-pin".to_string();
@@ -2169,6 +2170,7 @@ mod tests {
                 saved_to: None,
             }],
             total: 10,
+            message: None,
         }
     }
 

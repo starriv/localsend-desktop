@@ -303,7 +303,7 @@ fn direction_icon(direction: Direction) -> TrayIcon {
 /// characters would break the row's height or hide part of its title, so they
 /// are spaced out here. Wide (East Asian and emoji) characters take two
 /// columns, so a CJK name is cut at about half the characters of an ASCII one.
-fn short_name(alias: &str) -> String {
+pub(crate) fn short_name(alias: &str) -> String {
     let clean: String = alias
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
@@ -376,6 +376,16 @@ fn perform(session: &Session, action: TrayAction) {
             super::quit::quit(session);
         }
     }
+}
+
+/// Performs `action` as if its menu row had been clicked: for callers on the
+/// main thread outside the menu (a notification click). Does nothing before
+/// [`install`] ran (or where it does nothing).
+pub fn request(action: TrayAction) {
+    #[cfg(target_os = "macos")]
+    macos::request(action);
+    #[cfg(not(target_os = "macos"))]
+    let _ = action;
 }
 
 /// Brings the window (and the Dock icon) back and focuses the app.
@@ -573,6 +583,19 @@ mod macos {
                 });
             });
         });
+    }
+
+    /// Main thread: queues `action` for the session, bringing the app back to
+    /// the Dock first when it opens the window (as a menu click does).
+    pub fn request(action: TrayAction) {
+        if matches!(action, TrayAction::Open(_))
+            && let Some(mtm) = MainThreadMarker::new()
+        {
+            activate(mtm);
+        }
+        if let Some(sender) = ACTIONS.get() {
+            let _ = sender.try_send(action);
+        }
     }
 
     /// Main thread: the status item, its menu and the window observer.
@@ -1083,6 +1106,7 @@ mod tests {
                 saved_to: None,
             }],
             total: 1,
+            message: None,
         });
         let rows = menu_rows(&state, true, Language::Zh);
         assert_eq!(labels(&rows)[1], "iPhone 15 Pro 想给你发送文件");

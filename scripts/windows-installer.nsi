@@ -16,7 +16,8 @@
 ; In-app updates run this installer as `setup.exe /S /UPDATE` and then quit
 ; (src/update/install.rs): /UPDATE waits for the running LocalSend.exe to
 ; exit, keeps the shortcuts the user removed removed, and starts the app again
-; when the files are in place.
+; when the files are in place - unless /NORUN is passed too (the update is
+; installed as the user quits the app).
 ;
 ; Kept ASCII-only: NSIS reads `.nsi` without a BOM as ANSI, and the standard
 ; page texts of both languages come from MUI's language files.
@@ -75,14 +76,21 @@ VIAddVersionKey "LegalCopyright" "MIT License"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
 Var Updating
+Var NoRun
 
 Function .onInit
   StrCpy $Updating 0
+  StrCpy $NoRun 0
   ${GetParameters} $R0
   ClearErrors
   ${GetOptions} $R0 "/UPDATE" $R1
   ${IfNot} ${Errors}
     StrCpy $Updating 1
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $R0 "/NORUN" $R1
+  ${IfNot} ${Errors}
+    StrCpy $NoRun 1
   ${EndIf}
   !insertmacro MUI_LANGDLL_DISPLAY
 FunctionEnd
@@ -133,6 +141,7 @@ Section "LocalSend" SEC_MAIN
 
   ; A silent install shows no finish page (and no "Start LocalSend" box).
   ${If} $Updating == 1
+  ${AndIf} $NoRun == 0
     Exec '"$INSTDIR\LocalSend.exe"'
   ${EndIf}
 SectionEnd

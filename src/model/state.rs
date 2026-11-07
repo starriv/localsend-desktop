@@ -67,6 +67,8 @@ pub struct IncomingRequest {
     pub peer: Peer,
     pub files: Vec<OfferedFile>,
     pub total: u64,
+    /// The text, when the request is a LocalSend message rather than files.
+    pub message: Option<String>,
 }
 
 /// A transfer in flight or in the session's list.
@@ -517,12 +519,14 @@ impl AppState {
                 peer,
                 files,
                 total,
+                message,
             } => {
                 self.incoming = Some(IncomingRequest {
                     id,
                     peer,
                     files,
                     total,
+                    message,
                 });
             }
             TransferEvent::Started {
@@ -770,6 +774,7 @@ mod tests {
             peer,
             files: vec![file("a.bin")],
             total: 10,
+            message: None,
         });
     }
 
@@ -955,6 +960,7 @@ mod tests {
             peer: peer("B", true),
             files: vec![file("b.bin")],
             total: 10,
+            message: None,
         });
         assert!(!state.take_pending_restart());
         state.apply(TransferEvent::Cancelled {

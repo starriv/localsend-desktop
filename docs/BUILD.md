@@ -192,8 +192,12 @@ Keep the PEM in a password manager; losing it means users must reinstall by hand
 
 **Installing.** macOS unpacks the `.zip`, checks its bundle id, version and
 `codesign --verify`, and a detached script swaps the `.app` once the app has
-quit, then reopens it. Windows runs the installer with `/S /UPDATE` (it waits
-for `LocalSend.exe` to exit and relaunches it). Copies that cannot replace
+quit. Windows runs the installer with `/S /UPDATE` (it waits for
+`LocalSend.exe` to exit). "Restart to update" relaunches the app afterwards;
+an ordinary quit installs the ready update without reopening it (Windows adds
+`/NORUN`). Native Windows closes, including Alt+F4, use the same quit flow.
+A verified download left by an earlier launch is reused after checking its
+size and SHA-256 again. Copies that cannot replace
 themselves (a `cargo run` build, the Windows portable zip, a translocated or
 read-only bundle) link to the release page instead.
 

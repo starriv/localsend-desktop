@@ -18,9 +18,9 @@
 //! - [`files`] — open/reveal, the file and folder pickers, the download
 //!   folder picker.
 //! - [`clipboard`] — read text and files copied in Finder.
-//! - [`notify`] — the notification hook. nsh 0.4.0 has no notification API, so
-//!   [`notify::available`] is `false` and [`notify::install`] is a no-op for
-//!   now; the module documents the wiring for when the dependency allows it.
+//! - [`notify`] — system notifications for incoming requests and received
+//!   transfers (macOS, through `UNUserNotificationCenter`: nsh 0.4 has no
+//!   notification API).
 //! - [`status_item`] — the menu bar item and its menu (macOS): devices,
 //!   status, recent transfers, Open and Quit; the app leaves the Dock while
 //!   its window is hidden.
@@ -34,6 +34,8 @@ pub mod notify;
 pub mod quit;
 pub mod status_item;
 pub mod window;
+#[cfg(target_os = "windows")]
+mod windows_close;
 
 use crate::model::Session;
 use std::path::PathBuf;
@@ -44,6 +46,8 @@ use std::sync::OnceLock;
 /// Creates nsh effects and tasks, so it must run inside a component body
 /// (the root [`crate::App`] is the right place) — never outside an owner.
 pub fn install(session: Session) {
+    #[cfg(target_os = "windows")]
+    windows_close::install(session.clone());
     window::setup(session.clone());
     menu::install(session.clone());
     status_item::install(session.clone());

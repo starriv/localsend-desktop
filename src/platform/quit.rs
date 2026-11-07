@@ -20,8 +20,8 @@
 //! has no `applicationShouldTerminate` hook (see `docs/DESIGN.md`).
 //!
 //! On Windows and Linux there is no keep-alive in nsh 0.4, so closing the
-//! window ends the process whatever the setting says; [`close`] still quits
-//! cleanly through [`quit`] there.
+//! window ends the process whatever the setting says. On Windows,
+//! `platform::windows_close` routes native closes through [`quit`] too.
 
 use crate::i18n;
 use crate::model::Session;
@@ -95,10 +95,15 @@ pub fn restart_to_update(session: &Session) {
     }
 }
 
-/// Flushes the session, then terminates: `quit_app()` on macOS, and window
-/// close (which ends the process when there is no keep-alive) elsewhere.
+/// Flushes the session, hands a downloaded update to the installer (it runs
+/// once this process has exited), then terminates: `quit_app()` on macOS,
+/// and window close (which ends the process when there is no keep-alive)
+/// elsewhere.
 fn quit_now(session: &Session) {
     session.shutdown();
+    session.install_on_quit();
+    #[cfg(target_os = "windows")]
+    super::windows_close::allow_close();
     #[cfg(target_os = "macos")]
     {
         nsh_platform_macos::quit_app();

@@ -183,6 +183,10 @@ jobs:
           $version = & (Join-Path $bin 'nsh.exe') --version
           if ($version -notmatch '^nsh 0\.4\.') { throw "nsh 0.4.x is required (found $version)" }
 
+      - name: Test the native close and quit handoff
+        shell: pwsh
+        run: cargo test --locked --lib platform::windows_close::tests::native_destruction_waits_for_the_quit_flow
+
       - name: Package the Windows app
         shell: pwsh
         run: nsh package --target windows

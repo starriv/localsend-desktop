@@ -303,6 +303,10 @@ pub fn staging_dir() -> PathBuf {
 /// Downloads `asset` into a fresh `dir/<version>/`, counting the bytes in
 /// `received`, and checks its size and SHA-256. A file that does not match is
 /// deleted.
+///
+/// A file an earlier launch already downloaded there is reused when it still
+/// matches the signed manifest's size and SHA-256: quitting before "Restart
+/// to update" showed must not cost the user a second download.
 pub async fn download(
     client: &reqwest::Client,
     asset: &Asset,
@@ -310,12 +314,23 @@ pub async fn download(
     received: Arc<AtomicU64>,
 ) -> Result<PathBuf> {
     validate_asset(asset)?;
+    let path = dir.join(&asset.name);
+    let staged = {
+        let (path, size, sha256) = (path.clone(), asset.size, asset.sha256.clone());
+        tokio::task::spawn_blocking(move || file_matches(&path, size, &sha256))
+            .await
+            .unwrap_or(false)
+    };
+    if staged {
+        tracing::info!(file = %path.display(), "Reusing the update downloaded earlier");
+        received.store(asset.size, Ordering::Relaxed);
+        return Ok(path);
+    }
     // Older staged versions are of no use any more.
     let _ = tokio::fs::remove_dir_all(dir).await;
     tokio::fs::create_dir_all(dir)
         .await
         .map_err(Error::install)?;
-    let path = dir.join(&asset.name);
     let partial = dir.join(format!("{}.part", asset.name));
     let result = download_to(client, asset, &partial, &received).await;
     match result {
@@ -382,6 +397,32 @@ async fn download_to(
         )));
     }
     Ok(())
+}
+
+/// Whether `path` is a file of exactly `size` bytes whose SHA-256 is
+/// `sha256`. Blocking (it reads the whole file): call it from
+/// `spawn_blocking`.
+fn file_matches(path: &Path, size: u64, sha256: &str) -> bool {
+    use std::io::Read;
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() != size {
+        return false;
+    }
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => hasher.update(&buffer[..read]),
+            Err(_) => return false,
+        }
+    }
+    hex(&hasher.finalize()).eq_ignore_ascii_case(sha256)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -493,5 +534,20 @@ mod tests {
     #[test]
     fn hex_is_lowercase() {
         assert_eq!(hex(&[0x00, 0xab, 0x0f]), "00ab0f");
+    }
+
+    /// An earlier download is reused only when its size and digest match.
+    #[test]
+    fn a_staged_file_is_reused_only_when_it_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("LocalSend.zip");
+        std::fs::write(&path, b"abc").unwrap();
+        let sha = hex(&Sha256::digest(b"abc"));
+        assert!(file_matches(&path, 3, &sha));
+        assert!(file_matches(&path, 3, &sha.to_uppercase()));
+        assert!(!file_matches(&path, 4, &sha));
+        assert!(!file_matches(&path, 3, &hex(&Sha256::digest(b"abd"))));
+        assert!(!file_matches(&dir.path().join("missing.zip"), 3, &sha));
+        assert!(!file_matches(dir.path(), 3, &sha));
     }
 }

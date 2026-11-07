@@ -65,6 +65,9 @@ pub enum TransferEvent {
         peer: Peer,
         files: Vec<OfferedFile>,
         total: u64,
+        /// The text of a LocalSend *message* offer (already clamped), shown
+        /// before the user accepts; `None` for a file transfer.
+        message: Option<String>,
     },
     Started {
         id: String,
