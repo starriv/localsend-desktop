@@ -84,6 +84,10 @@ jobs:
     needs: prepare
     runs-on: macos-15
     timeout-minutes: 60
+    # macos-15 defaults to Xcode 16.4, which silently ignores .icon inputs.
+    # Select the installed toolchain that supports Icon Composer assets.
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

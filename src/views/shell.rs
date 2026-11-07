@@ -576,7 +576,7 @@ fn settings_row(
     view()
         .flex_shrink_0()
         .px(px(space::SM))
-        .pb(px(space::SM))
+        .py(px(space::SM))
         .border_t_1()
         .border_t_color(move || theme().sidebar_border)
         .child(

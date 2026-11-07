@@ -93,6 +93,12 @@ case "$build" in
         ;;
 esac
 
+# Older actool versions exit successfully while ignoring .icon inputs. Fail
+# before the Rust build instead of discovering missing icon outputs later.
+xcode_major=$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')
+[ -n "$xcode_major" ] && [ "$xcode_major" -ge 26 ] \
+    || die "Xcode 26 or later is required for the layered app icon; select it with DEVELOPER_DIR"
+
 # Build and modify the bundle in a temporary directory, then swap it in: a
 # failed strip/sign leaves the previous .app (and .nsh/out) intact.
 stage=$(mktemp -d "${TMPDIR:-/tmp}/localsend-package.XXXXXX")
@@ -153,7 +159,6 @@ plist_set_string NSHumanReadableCopyright \
 "$plist_buddy" -c "Delete :NSMicrophoneUsageDescription" "$plist" >/dev/null 2>&1 || true
 "$plist_buddy" -c "Delete :NSSpeechRecognitionUsageDescription" "$plist" >/dev/null 2>&1 || true
 
-echo "== licenses"
 resources="$staged/Contents/Resources"
 mkdir -p "$resources"
 echo "== layered app icon"
@@ -164,10 +169,13 @@ mkdir -p "$icon_build"
 xcrun actool design/AppIcon.icon --compile "$icon_build" \
     --platform macosx --minimum-deployment-target 14.0 --app-icon AppIcon \
     --output-partial-info-plist "$icon_build/icon.plist"
+[ -s "$icon_build/AppIcon.icns" ] && [ -s "$icon_build/Assets.car" ] \
+    || die "actool did not produce the layered icon and compatibility .icns"
 cp "$icon_build/AppIcon.icns" "$resources/AppIcon.icns"
 cp "$icon_build/Assets.car" "$resources/Assets.car"
 plist_set_string CFBundleIconName AppIcon
 plist_set_string CFBundleIconFile AppIcon
+echo "== licenses"
 cp LICENSE "$resources/LICENSE"
 cp NOTICE "$resources/NOTICE"
 # The core's Apache-2.0 text, kept separate from the app's MIT license.
