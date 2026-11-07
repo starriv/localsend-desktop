@@ -16,6 +16,10 @@ on:
         description: Build only the experimental Android APK (Actions artifact, no Release changes)
         type: boolean
         default: false
+      macos_only:
+        description: Repair macOS assets and the update manifest (Windows assets must already exist)
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -82,14 +86,24 @@ jobs:
     if: ${{ !inputs.android_only }}
     name: macOS .app, zip and dmg
     needs: prepare
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
-    # macos-15 defaults to Xcode 16.4, which silently ignores .icon inputs.
-    # Select the installed toolchain that supports Icon Composer assets.
+    # The icon renderer needs the modern host frameworks as well as Xcode;
+    # Xcode 26's asset runtime crashes with missing symbols on macos-15.
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate the layered icon toolchain before building Rust
+        run: |
+          xcodebuild -version
+          mkdir -p "$RUNNER_TEMP/icon-preflight"
+          xcrun actool design/AppIcon.icon --compile "$RUNNER_TEMP/icon-preflight" \
+            --platform macosx --minimum-deployment-target 14.0 --app-icon AppIcon \
+            --output-partial-info-plist "$RUNNER_TEMP/icon-preflight/icon.plist"
+          test -s "$RUNNER_TEMP/icon-preflight/AppIcon.icns"
+          test -s "$RUNNER_TEMP/icon-preflight/Assets.car"
 
       # rust-toolchain.toml pins 1.97.1; the action reads it when no
       # `toolchain` input is given (its pinned version does not take one).
@@ -164,7 +178,7 @@ jobs:
           gh release upload "${{ needs.prepare.outputs.tag }}" dist/* --clobber
 
   windows:
-    if: ${{ !inputs.android_only }}
+    if: ${{ !inputs.android_only && !inputs.macos_only }}
     name: Windows x64 portable build
     needs: prepare
     runs-on: windows-latest
@@ -254,6 +268,7 @@ jobs:
         run: gh release upload "${{ needs.prepare.outputs.tag }}" dist/* --clobber
 
   android:
+    if: ${{ !inputs.macos_only }}
     name: experimental Android ARM64 APK
     needs: prepare
     runs-on: ubuntu-24.04
@@ -348,7 +363,8 @@ jobs:
   # signed with the Ed25519 key in the UPDATE_SIGNING_KEY secret (PEM); the
   # app embeds the public half (src/update/mod.rs, PUBLIC_KEY).
   manifest:
-    if: ${{ !inputs.android_only }}
+    # A macOS-only repair uses Windows assets from the existing Release.
+    if: ${{ always() && !cancelled() && !inputs.android_only && needs.prepare.result == 'success' && needs.macos.result == 'success' && (needs.windows.result == 'success' || inputs.macos_only) }}
     name: update manifest
     needs: [prepare, macos, windows]
     runs-on: ubuntu-latest
