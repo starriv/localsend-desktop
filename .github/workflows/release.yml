@@ -3,12 +3,19 @@ name: Release
 # Builds the installers and attaches them to a GitHub Release: a macOS .app
 # (zip and dmg) and the Windows x64 installer and portable build, then the
 # signed update manifest (latest.json + .sig) the app's updater reads.
+# Also tries an experimental Android ARM64 APK, independently of desktop
+# updates. Dispatch with android_only to test it without touching a Release.
 # Dispatch it from the Actions tab or push a `v*` tag. The version comes from
 # Cargo.toml and nsh.json. Builds are ad-hoc signed (macOS) / unsigned (Windows), not
 # notarized.
 
 on:
   workflow_dispatch:
+    inputs:
+      android_only:
+        description: Build only the experimental Android APK (Actions artifact, no Release changes)
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -46,6 +53,7 @@ jobs:
           fi
 
       - name: Create the release
+        if: ${{ !inputs.android_only }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -56,6 +64,7 @@ jobs:
 
           - macOS（Apple 芯片，macOS 14+）：下载 LocalSend-${VERSION}-macos-arm64.dmg（或 .zip），把 LocalSend.app 拖进「应用程序」文件夹；ad-hoc 签名、未公证，首次打开请右键点击 →「打开」。
           - Windows（x64）：下载 LocalSend-${VERSION}-windows-x86_64-setup.exe（安装器，装到 %LOCALAPPDATA%\Programs\LocalSend，带开始菜单/桌面快捷方式和卸载项），或 LocalSend-${VERSION}-windows-x86_64.zip（免安装）；构建未签名，SmartScreen 可能提示。
+          - Android（实验版，ARM64，Android 9+）：若实验构建成功，会附带 LocalSend-${VERSION}-android-arm64-experimental.apk。使用临时调试签名，尚未完成手机端适配和真机验证，不承诺跨构建覆盖安装。
 
           每个资源旁的 .sha256 文件可用于校验下载。
           EOF
@@ -70,6 +79,7 @@ jobs:
           fi
 
   macos:
+    if: ${{ !inputs.android_only }}
     name: macOS .app, zip and dmg
     needs: prepare
     runs-on: macos-15
@@ -150,6 +160,7 @@ jobs:
           gh release upload "${{ needs.prepare.outputs.tag }}" dist/* --clobber
 
   windows:
+    if: ${{ !inputs.android_only }}
     name: Windows x64 portable build
     needs: prepare
     runs-on: windows-latest
@@ -238,12 +249,101 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ needs.prepare.outputs.tag }}" dist/* --clobber
 
-  # Runs last, once every installer is on the release: the app only offers a
+  android:
+    name: experimental Android ARM64 APK
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # The CLI compiles a host-side Rust describer as well as the Android
+      # library. Limit parallelism on the hosted runner (GTK on Linux).
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust and the Android target
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install the host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev
+
+      - name: Install the pinned Android SDK and NDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.1" "ndk;28.0.13004108"
+          # nsh 0.4 chooses the newest installed build-tools. Expose only
+          # the pinned version, rather than whatever the runner image adds.
+          sdk="$RUNNER_TEMP/localsend-android-sdk"
+          mkdir -p "$sdk/platforms" "$sdk/build-tools"
+          ln -s "$ANDROID_HOME/platforms/android-35" "$sdk/platforms/android-35"
+          ln -s "$ANDROID_HOME/build-tools/35.0.1" "$sdk/build-tools/35.0.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.0.13004108" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: android-arm64
+
+      - name: Install nsh 0.4
+        env:
+          NSH_VERSION: v0.4.0
+        run: |
+          asset=nsh-linux-x86_64.tar.gz
+          url="https://github.com/longbridge/nsh/releases/download/$NSH_VERSION/$asset"
+          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$RUNNER_TEMP/$asset" "$url"
+          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$RUNNER_TEMP/$asset.sha256" "$url.sha256"
+          (cd "$RUNNER_TEMP" && sha256sum -c "$asset.sha256")
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.local/bin"
+          mv "$RUNNER_TEMP/nsh" "$RUNNER_TEMP/localsend-nsh"
+          ln -s "$RUNNER_TEMP/localsend-nsh/bin/nsh" "$HOME/.local/bin/nsh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/nsh" --version | grep -q '^nsh 0\.4\.'
+
+      - name: Package and verify the experimental APK
+        shell: bash
+        run: ./scripts/package-android.sh 2>&1 | tee "$RUNNER_TEMP/android-package.log"
+
+      - name: Upload the APK and build metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: LocalSend-${{ needs.prepare.outputs.version }}-android-arm64-experimental
+          path: dist/android/*
+          if-no-files-found: error
+
+      - name: Attach the APK to the Release
+        if: ${{ !inputs.android_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release upload "$TAG" dist/android/*.apk dist/android/*.sha256 --clobber
+
+      - name: Save the packaging log on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-build-log
+          path: ${{ runner.temp }}/android-package.log
+          if-no-files-found: ignore
+
+  # Runs once the desktop installers are on the release: the app only offers a
   # release that has `latest.json`, so a release whose builds are still
   # running (or failed) is never offered half-uploaded. The manifest is
   # signed with the Ed25519 key in the UPDATE_SIGNING_KEY secret (PEM); the
   # app embeds the public half (src/update/mod.rs, PUBLIC_KEY).
   manifest:
+    if: ${{ !inputs.android_only }}
     name: update manifest
     needs: [prepare, macos, windows]
     runs-on: ubuntu-latest

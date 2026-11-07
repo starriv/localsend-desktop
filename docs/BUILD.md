@@ -159,6 +159,34 @@ windows`) to a GitHub Release — portable zip and an NSIS installer built from
 `scripts/windows-installer.nsi` — each with a `.sha256`; dispatch it from the
 Actions tab or push a `v*` tag.
 
+## Experimental Android APK
+
+The Release workflow also attempts an ARM64 APK with `nsh 0.4.0`, Android
+platform 35, build-tools 35.0.1 and NDK 28.0.13004108. It checks the signature,
+application id, version/build and packaged ABI before uploading the APK and
+its SHA-256. Build metadata is kept as an Actions artifact. The desktop update
+manifest does not depend on this experiment and contains only desktop assets.
+
+For a standalone attempt, dispatch **Release** with `android_only: true`:
+
+```sh
+gh workflow run release.yml --ref main -f android_only=true
+```
+
+This mode only uploads an Actions artifact: it does not create or edit a
+GitHub Release, rebuild desktop installers, or sign a desktop update manifest.
+On an ordinary release, a successful Android job also attaches
+`LocalSend-<version>-android-arm64-experimental.apk` and its checksum.
+
+The APK uses a temporary debug signing key, so builds may require an uninstall
+before installing another build. Mobile layout, storage/permissions,
+discovery, background transfers and notifications have not been device-tested.
+For a local build with the matching SDK/NDK, JDK and Rust target installed:
+
+```sh
+./scripts/package-android.sh
+```
+
 ## Updates
 
 The app updates itself from GitHub releases (`src/update/`, `src/model/updater.rs`).
