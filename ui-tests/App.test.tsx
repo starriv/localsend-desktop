@@ -44,7 +44,7 @@ test("the settings sheet opens from the rail and closes with Escape", async () =
   // Kept in sync by scripts/bump-version.sh; scripts/check.sh fails when this
   // string and the crate/nsh.json versions disagree, so a version bump cannot
   // leave this test red unnoticed.
-  expect(app.texts()).toContain("Version 1.0.8");
+  expect(app.texts()).toContain("Version 1.0.9");
   expect(app.texts()).toContain("Protocol v2.2");
   await app.keyboard.press("escape");
   expect(app.texts()).not.toContain("Device name");

@@ -21,9 +21,9 @@
 //! - [`notify`] — system notifications for incoming requests and received
 //!   transfers (macOS, through `UNUserNotificationCenter`: nsh 0.4 has no
 //!   notification API).
-//! - [`status_item`] — the menu bar item and its menu (macOS): devices,
-//!   status, recent transfers, Open and Quit; the app leaves the Dock while
-//!   its window is hidden.
+//! - [`status_item`] — the macOS menu bar item (devices, status, recent
+//!   transfers, Open and Quit) and Windows tray (Open and Quit); macOS leaves
+//!   the Dock while its window is hidden.
 //! - [`quit`] — closing the window and quitting (with a confirmation while a
 //!   transfer is in progress, and a session flush before the process exits).
 
@@ -37,6 +37,8 @@ pub mod urls;
 pub mod window;
 #[cfg(target_os = "windows")]
 mod windows_close;
+#[cfg(target_os = "windows")]
+mod windows_tray;
 
 use crate::model::Session;
 use std::path::PathBuf;

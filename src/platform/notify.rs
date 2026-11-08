@@ -13,8 +13,10 @@
 //!
 //! The sender's name is the title, as in Messages. Clicking a notification
 //! opens the window (on History for a completed receive). While the window is
-//! visible and LocalSend is the active app, nothing is presented: the request
-//! sheet and the toasts already show it.
+//! visible and LocalSend is the active app, banners are suppressed: the request
+//! sheet and the toasts already show it. Foreground requests play an in-app
+//! sound, including outside a bundle. Background requests use system notification
+//! sounds, respecting notification permissions, sound settings and Focus.
 //!
 //! What to post is decided by the pure [`Planner`] (covered by the tests),
 //! from the session's state on the engine thread. nsh 0.4 has no notification
@@ -31,7 +33,9 @@
 //! [`open_system_settings`].
 
 use crate::i18n::{self, Language, fill};
-use crate::model::{AppState, IncomingRequest, Session, Transfer, TransferStatus, View};
+#[cfg(any(target_os = "macos", test))]
+use crate::model::View;
+use crate::model::{AppState, IncomingRequest, Session, Transfer, TransferStatus};
 use crate::net::Direction;
 use std::collections::HashSet;
 
@@ -99,6 +103,22 @@ pub struct Note {
     pub id: String,
     pub title: String,
     pub body: String,
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AlertSound {
+    InApp,
+    System,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn alert_sound(note: &Note, foreground: bool) -> AlertSound {
+    if note.id == REQUEST_ID && foreground {
+        AlertSound::InApp
+    } else {
+        AlertSound::System
+    }
 }
 
 /// What changes in the notification center.
@@ -258,6 +278,7 @@ fn excerpt(text: &str) -> String {
 }
 
 /// The screen a notification opens.
+#[cfg(any(target_os = "macos", test))]
 fn destination(id: &str) -> Option<View> {
     id.starts_with(RECEIVED_PREFIX).then_some(View::History)
 }
@@ -278,7 +299,7 @@ mod macos {
     //! `UNUserNotificationCenter`, through the Objective-C runtime (the app
     //! has no typed binding for the UserNotifications framework).
 
-    use super::{AccessRelay, Change, Planner, destination};
+    use super::{AccessRelay, AlertSound, Change, Planner, alert_sound, destination};
     use crate::model::{NotificationAccess, Session};
     use crate::platform::status_item::{self, TrayAction};
     use block2::{Block, RcBlock};
@@ -287,7 +308,7 @@ mod macos {
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Bool, NSObjectProtocol};
     use objc2::{AnyThread, MainThreadMarker, define_class, msg_send};
-    use objc2_app_kit::NSApplication;
+    use objc2_app_kit::{NSApplication, NSSound};
     use objc2_foundation::{NSArray, NSObject, NSString};
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -332,7 +353,7 @@ mod macos {
                 _notification: &AnyObject,
                 handler: &Block<dyn Fn(usize)>,
             ) {
-                let visible = on_main(window_visible);
+                let visible = on_main(window_in_foreground);
                 handler.call((if visible { 0 } else { PRESENT },));
             }
 
@@ -530,27 +551,42 @@ mod macos {
 
     /// Main thread: posts and withdraws notifications.
     fn apply(changes: Vec<Change>) {
-        if !ENABLED.load(Ordering::Relaxed) {
-            return;
-        }
-        let Some(center) = center() else { return };
+        let foreground = window_in_foreground();
+        let center = ENABLED.load(Ordering::Relaxed).then(center).flatten();
         for change in changes {
             match change {
-                Change::Show(note) => post(&center, &note.id, &note.title, &note.body),
+                Change::Show(note) => {
+                    let sound = alert_sound(&note, foreground);
+                    if sound == AlertSound::InApp {
+                        if let Some(sound) = NSSound::soundNamed(&NSString::from_str("Glass")) {
+                            if !sound.play() {
+                                tracing::debug!(
+                                    "Request sound is already playing or could not start"
+                                );
+                            }
+                        } else {
+                            tracing::warn!("Request sound is unavailable");
+                        }
+                    }
+                    if let Some(center) = &center {
+                        post(center, &note.id, &note.title, &note.body, sound);
+                    }
+                }
                 Change::Remove(id) => {
+                    let Some(center) = &center else { continue };
                     let ids = NSArray::from_retained_slice(&[NSString::from_str(&id)]);
                     let _: () = unsafe {
-                        msg_send![&center, removeDeliveredNotificationsWithIdentifiers: &*ids]
+                        msg_send![center, removeDeliveredNotificationsWithIdentifiers: &*ids]
                     };
                     let _: () = unsafe {
-                        msg_send![&center, removePendingNotificationRequestsWithIdentifiers: &*ids]
+                        msg_send![center, removePendingNotificationRequestsWithIdentifiers: &*ids]
                     };
                 }
             }
         }
     }
 
-    fn post(center: &AnyObject, id: &str, title: &str, body: &str) {
+    fn post(center: &AnyObject, id: &str, title: &str, body: &str, sound: AlertSound) {
         let (Some(content_class), Some(sound_class), Some(request_class)) = (
             AnyClass::get(c"UNMutableNotificationContent"),
             AnyClass::get(c"UNNotificationSound"),
@@ -562,7 +598,13 @@ mod macos {
             let content: Retained<AnyObject> = msg_send![content_class, new];
             let _: () = msg_send![&content, setTitle: &*NSString::from_str(title)];
             let _: () = msg_send![&content, setBody: &*NSString::from_str(body)];
-            let sound: Option<Retained<AnyObject>> = msg_send![sound_class, defaultSound];
+            // A foreground request already rang. Capture that decision in
+            // the content so switching apps before delivery cannot ring twice.
+            // Background sounds stay under the notification center's policy.
+            let sound: Option<Retained<AnyObject>> = match sound {
+                AlertSound::InApp => None,
+                AlertSound::System => msg_send![sound_class, defaultSound],
+            };
             let _: () = msg_send![&content, setSound: sound.as_deref()];
             let request: Retained<AnyObject> = msg_send![
                 request_class,
@@ -627,16 +669,15 @@ mod macos {
         }
     }
 
-    /// Main thread: a window of the app is on screen (not hidden, not
-    /// minimized).
-    fn window_visible() -> bool {
+    /// Main thread: LocalSend is active with a visible, non-minimized window.
+    /// A window behind another app must still follow system notification rules.
+    fn window_in_foreground() -> bool {
         let Some(mtm) = MainThreadMarker::new() else {
             return false;
         };
-        NSApplication::sharedApplication(mtm)
-            .windows()
-            .iter()
-            .any(|window| {
+        let app = NSApplication::sharedApplication(mtm);
+        app.isActive()
+            && app.windows().iter().any(|window| {
                 window.canBecomeMainWindow() && window.isVisible() && !window.isMiniaturized()
             })
     }
@@ -755,6 +796,18 @@ mod tests {
             planner.plan(&state, Language::Zh),
             [Change::Remove(REQUEST_ID.to_string())]
         );
+    }
+
+    #[test]
+    fn only_foreground_requests_use_in_app_audio() {
+        let request = request_note(&request("r1", vec![file("a.jpg")], None), Language::Zh);
+        assert_eq!(alert_sound(&request, true), AlertSound::InApp);
+        // Both hidden windows and visible windows behind another app are
+        // background: their sounds must go through system notifications.
+        assert_eq!(alert_sound(&request, false), AlertSound::System);
+        let completed = received_note(&received("t1", &["a.jpg"], &[]), Language::Zh).unwrap();
+        assert_eq!(alert_sound(&completed, true), AlertSound::System);
+        assert_eq!(alert_sound(&completed, false), AlertSound::System);
     }
 
     #[test]

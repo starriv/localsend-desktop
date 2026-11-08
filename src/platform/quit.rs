@@ -19,14 +19,16 @@
 //! A system-level termination (log out, `kill`) still bypasses it — nsh 0.4
 //! has no `applicationShouldTerminate` hook (see `docs/DESIGN.md`).
 //!
-//! On Windows and Linux there is no keep-alive in nsh 0.4, so closing the
-//! window ends the process whatever the setting says. On Windows,
-//! `platform::windows_close` routes native closes through [`quit`] too.
+//! Windows uses `platform::windows_close` to intercept native destruction
+//! and hide the window while its tray keeps the app reachable. Linux has no
+//! tray/keep-alive in nsh 0.4, so closing its window still ends the process.
 
 use crate::i18n;
 use crate::model::Session;
 use nsh_base::alert_dialog;
-use nsh_core::element::desktop::{close_window, order_front};
+use nsh_core::element::desktop::close_window;
+#[cfg(not(target_os = "windows"))]
+use nsh_core::element::desktop::order_front;
 use nsh_core::prelude::*;
 
 /// Whether closing the window should keep the app (and its transfers) running.
@@ -44,6 +46,9 @@ pub fn runs_in_background(session: &Session) -> bool {
 /// a transfer is in progress).
 pub fn close(session: &Session) {
     if runs_in_background(session) {
+        #[cfg(target_os = "windows")]
+        super::windows_close::hide();
+        #[cfg(not(target_os = "windows"))]
         close_window();
     } else {
         quit(session);
@@ -122,5 +127,8 @@ pub fn show() {
     if !is_desktop() {
         return;
     }
+    #[cfg(target_os = "windows")]
+    super::windows_close::show();
+    #[cfg(not(target_os = "windows"))]
     order_front();
 }

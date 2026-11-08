@@ -223,7 +223,8 @@ Keep the PEM in a password manager; losing it means users must reinstall by hand
 quit. Windows runs the installer with `/S /UPDATE` (it waits for
 `LocalSend.exe` to exit). "Restart to update" relaunches the app afterwards;
 an ordinary quit installs the ready update without reopening it (Windows adds
-`/NORUN`). Native Windows closes, including Alt+F4, use the same quit flow.
+`/NORUN`). Native Windows closes, including Alt+F4, hide to the tray when
+background mode is enabled; explicit Quit still uses the shutdown/update flow.
 A verified download left by an earlier launch is reused after checking its
 size and SHA-256 again. Copies that cannot replace
 themselves (a `cargo run` build, the Windows portable zip, a translocated or

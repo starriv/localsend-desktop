@@ -1,8 +1,9 @@
 name: CI
 
 # Build check for every push and pull request: formatting and lints, which
-# compile the whole app. The slower gates (unit/e2e/UI tests, packaging) are
-# not part of the default flow: run `./scripts/check.sh` locally when you mean
+# compile the whole app, plus the Windows native close regression. The full
+# unit/e2e/UI suite and packaging are not part of the default flow: run
+# `./scripts/check.sh` locally when you mean
 # to test, and dispatch `.github/workflows/release.yml` when you want a build
 # published.
 
@@ -48,3 +49,21 @@ jobs:
 
       - name: Lints (compiles every target)
         run: cargo clippy --locked --package localsend-desktop --all-targets --no-deps -- -D warnings
+
+  windows-close:
+    name: Windows close and tray regression
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@59a558e8c538bf4a23bbffa19e5a278b703f2920 # 1.97.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: locked
+
+      - name: Test native close, hide, restore and explicit quit
+        run: cargo test --locked --lib platform::windows_close::tests

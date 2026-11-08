@@ -15,7 +15,8 @@
 //! What the menu shows is computed by the pure [`menu_rows`], which the
 //! tests cover; the AppKit side only renders rows.
 //!
-//! Other platforms: [`install`] does nothing (nsh 0.4 offers no tray there).
+//! Windows uses a native notification-area icon with Open and Quit actions
+//! (`windows_tray`). On Linux [`install`] does nothing.
 
 use crate::i18n::{self, Language, fill};
 use crate::model::{AppState, Session, Transfer, TransferStatus, View};
@@ -359,7 +360,7 @@ fn display_columns(text: &str) -> usize {
 }
 
 /// Performs a menu action through the session, on the UI thread.
-fn perform(session: &Session, action: TrayAction) {
+pub(super) fn perform(session: &Session, action: TrayAction) {
     match action {
         TrayAction::Open(view) => {
             if let Some(view) = view {
@@ -384,7 +385,9 @@ fn perform(session: &Session, action: TrayAction) {
 pub fn request(action: TrayAction) {
     #[cfg(target_os = "macos")]
     macos::request(action);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    super::windows_tray::request(action);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = action;
 }
 
@@ -402,7 +405,9 @@ pub fn show_window() {
 pub fn install(session: Session) {
     #[cfg(target_os = "macos")]
     macos::install(session);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    super::windows_tray::install(session);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = session;
 }
 

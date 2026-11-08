@@ -37,8 +37,13 @@ One window, three destinations plus settings:
 
 ### Menu bar
 
-A menu bar (status) item is present the whole time the app runs, on macOS only:
-Windows and Linux have no tray. The item is the app mark drawn as a template
+A menu bar (status) item is present the whole time the app runs on macOS.
+Windows has a notification-area icon with localized Open LocalSend and Quit
+actions; clicking the icon restores the window. With background mode enabled,
+closing the window hides it and leaves transfers running. If the tray is
+unavailable, close minimizes instead so the app remains reachable. The icon is
+recreated after Explorer restarts. Linux has no tray.
+The macOS item is the app mark drawn as a template
 glyph; opening it shows, top to bottom:
 
 - the nearby-device count (a summary row; it is not clickable);

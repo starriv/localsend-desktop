@@ -1,6 +1,6 @@
 [package]
 name = "localsend-desktop"
-version = "1.0.8"
+version = "1.0.9"
 edition = "2024"
 rust-version = "1.97"
 publish = false
@@ -114,6 +114,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSMenuItem",
     "NSResponder",
     "NSRunningApplication",
+    "NSSound",
     "NSStatusBar",
     "NSStatusBarButton",
     "NSStatusItem",
