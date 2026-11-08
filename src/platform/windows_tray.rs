@@ -320,8 +320,9 @@ fn popup(hwnd: HWND) {
 /// of a close posted by another thread, then dispatch the real tray handler.
 #[cfg(test)]
 pub(super) fn test_close_recovery_orderings(main: HWND) {
+    use super::windows_close::wait_for_window;
     use nsh_platform_windows::windows::Win32::UI::WindowsAndMessaging::{
-        IsWindowVisible, PM_REMOVE, PeekMessageW, WM_QUIT,
+        IsIconic, IsWindowVisible, PM_REMOVE, PeekMessageW, WM_QUIT,
     };
     // SAFETY: the caller owns main on this thread; this test creates and
     // destroys its tray window here and dispatches only its own messages.
@@ -375,11 +376,14 @@ pub(super) fn test_close_recovery_orderings(main: HWND) {
             .as_bool()
         );
         DispatchMessageW(&message);
+        wait_for_window(|| IsIconic(main).as_bool());
         assert!(
             IsWindowVisible(main).as_bool(),
             "late close stranded the app"
         );
         super::windows_close::show();
+
+        wait_for_window(|| !IsIconic(main).as_bool());
 
         // Reverse ordering: the close hides first, then recovery restores it.
         READY.store(true, Ordering::Release);
@@ -395,13 +399,10 @@ pub(super) fn test_close_recovery_orderings(main: HWND) {
             .as_bool()
         );
         DispatchMessageW(&message);
-        assert!(!IsWindowVisible(main).as_bool());
+        wait_for_window(|| !IsWindowVisible(main).as_bool());
         READY.store(false, Ordering::Release);
         super::windows_close::show();
-        assert!(
-            IsWindowVisible(main).as_bool(),
-            "recovery did not restore the app"
-        );
+        wait_for_window(|| IsWindowVisible(main).as_bool());
 
         WINDOW.store(0, Ordering::Release);
         DestroyWindow(tray).unwrap();

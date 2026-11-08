@@ -154,37 +154,40 @@ unsafe extern "system" fn before_destroy(code: i32, wparam: WPARAM, lparam: LPAR
 }
 
 #[cfg(test)]
+pub(super) fn wait_for_window(mut condition: impl FnMut() -> bool) {
+    use nsh_platform_windows::windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "window state did not change"
+        );
+        // SAFETY: the test owns this thread's windows and services their
+        // asynchronous ShowWindow requests as the real UI loop would.
+        unsafe {
+            let mut message = MSG::default();
+            while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use nsh_platform_windows::windows::{
         Win32::UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, IsWindow,
-            IsWindowVisible, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, SC_CLOSE, SW_SHOW,
-            SendMessageW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE, WM_SYSCOMMAND,
-            WNDCLASSW, WS_OVERLAPPEDWINDOW,
+            CreateWindowExW, DefWindowProcW, DestroyWindow, IsWindow, IsWindowVisible,
+            RegisterClassW, SC_CLOSE, SW_SHOW, SendMessageW, ShowWindow, WINDOW_EX_STYLE, WM_CLOSE,
+            WM_SYSCOMMAND, WNDCLASSW, WS_OVERLAPPEDWINDOW,
         },
         core::w,
     };
-
-    fn wait_for(mut condition: impl FnMut() -> bool) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while !condition() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "window state did not change"
-            );
-            // SAFETY: the test owns this thread's windows and services their
-            // asynchronous ShowWindow requests as the real UI loop would.
-            unsafe {
-                let mut message = MSG::default();
-                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
-                    let _ = TranslateMessage(&message);
-                    DispatchMessageW(&message);
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-    }
 
     unsafe extern "system" fn window_proc(
         hwnd: HWND,
@@ -242,10 +245,10 @@ mod tests {
             // Background close hides the window without destroying the nsh
             // surface, which would stop the network and end the process.
             hide_window(hwnd, true);
-            wait_for(|| !IsWindowVisible(hwnd).as_bool());
+            wait_for_window(|| !IsWindowVisible(hwnd).as_bool());
             assert!(IsWindow(Some(hwnd)).as_bool());
             show();
-            wait_for(|| IsWindowVisible(hwnd).as_bool());
+            wait_for_window(|| IsWindowVisible(hwnd).as_bool());
 
             // The window can be closed and reopened repeatedly (also Alt+F4).
             SendMessageW(hwnd, WM_SYSCOMMAND, Some(WPARAM(SC_CLOSE as usize)), None);
@@ -254,10 +257,10 @@ mod tests {
 
             // Without a working tray, keep a taskbar entry for recovery.
             hide_window(hwnd, false);
-            wait_for(|| IsIconic(hwnd).as_bool());
+            wait_for_window(|| IsIconic(hwnd).as_bool());
             assert!(IsWindowVisible(hwnd).as_bool());
             show();
-            wait_for(|| !IsIconic(hwnd).as_bool());
+            wait_for_window(|| !IsIconic(hwnd).as_bool());
 
             super::super::windows_tray::test_close_recovery_orderings(hwnd);
 
