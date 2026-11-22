@@ -387,6 +387,7 @@ const EN: &[(&str, &str)] = &[
     ("tray.more", "{count} more transfers"),
     ("tray.recent", "Recent transfers"),
     ("tray.recent_empty", "No recent transfers"),
+    ("tray.recent_more", "View more transfer history"),
     ("tray.open", "Open LocalSend"),
     ("tray.quit", "Quit"),
     // Quit confirmation (an active transfer must not be interrupted silently)
@@ -697,6 +698,7 @@ const ZH: &[(&str, &str)] = &[
     ("tray.more", "还有 {count} 个传输"),
     ("tray.recent", "最近传输"),
     ("tray.recent_empty", "暂无最近传输"),
+    ("tray.recent_more", "查看更多传输记录"),
     ("tray.open", "打开 LocalSend"),
     ("tray.quit", "退出"),
     // Quit confirmation

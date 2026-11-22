@@ -28,7 +28,7 @@ use crate::ui::icons::IconName;
 const ACTIVE_ROWS: usize = 3;
 
 /// Finished transfers listed under "Recent transfers".
-const RECENT_ROWS: usize = 5;
+const RECENT_ROWS: usize = 3;
 
 /// Longest device name shown in a row, in display columns (the menu would grow
 /// as wide as the longest peer-chosen alias otherwise).
@@ -216,8 +216,9 @@ pub fn menu_rows(state: &AppState, online: bool, language: Language) -> Vec<Tray
         .transfers
         .iter()
         .filter(|transfer| !transfer.is_active())
-        .take(RECENT_ROWS)
+        .take(RECENT_ROWS + 1)
         .collect();
+    let has_more_recent = recent.len() > RECENT_ROWS;
     if recent.is_empty() {
         rows.push(TrayRow::item(
             "no-recent",
@@ -226,7 +227,7 @@ pub fn menu_rows(state: &AppState, online: bool, language: Language) -> Vec<Tray
             None,
         ));
     }
-    for transfer in recent {
+    for transfer in recent.into_iter().take(RECENT_ROWS) {
         let status = text(match transfer.status {
             TransferStatus::Completed => "status.completed",
             TransferStatus::Cancelled => "status.cancelled",
@@ -255,6 +256,15 @@ pub fn menu_rows(state: &AppState, online: bool, language: Language) -> Vec<Tray
             ),
             None,
             None,
+        ));
+    }
+
+    if has_more_recent {
+        rows.push(TrayRow::item(
+            "recent-more",
+            text("tray.recent_more"),
+            Some(TrayIcon::Recent),
+            Some(TrayAction::Open(Some(View::History))),
         ));
     }
 

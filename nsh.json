@@ -1,8 +1,8 @@
 {
   "name": "LocalSend",
   "id": "org.localsend.desktop",
-  "version": "1.0.9",
-  "build": 10,
+  "version": "1.0.10",
+  "build": 11,
   "icon": "assets/icon.png",
   "rust": ".",
   "root": "App",
